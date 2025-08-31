@@ -2,6 +2,11 @@ generate_topic_suggestions:
   description: >
     Generate 5-7 relevant topic suggestions for the given pillar: {pillar}.
     Consider trending topics, audience interests, and content gaps.
+    
+    You can optionally use the Web Search Tool to research trending topics,
+    but primarily use your expertise to brainstorm relevant topics.
+    Do NOT use Research Mode Tool for topic generation.
+    
     Return topics with title, description, and relevance score.
   expected_output: >
     A structured list of topic suggestions with:
@@ -10,14 +15,16 @@ generate_topic_suggestions:
     - Target audience
     - Content pillar alignment
     - Estimated engagement potential
-  agent: topic_researcher
 
 research_topic:
   description: >
     Research the selected topic: {topic} using the specified method: {research_method}.
-    For SERP analysis: search and analyze top 10 search results.
-    For Internal KB: retrieve relevant documents from knowledge base.
-    For Upload: process and analyze uploaded reference materials.
+    
+    IMPORTANT: Use Research Mode Tool with the correct mode:
+    - For research_method 'SERP': use mode 'serp' 
+    - For research_method 'RAG': use mode 'rag'
+    - For research_method 'reference': use mode 'reference'
+    
     Extract key insights, statistics, and supporting information.
   expected_output: >
     Comprehensive research findings including:
@@ -26,7 +33,6 @@ research_topic:
     - Content gaps and opportunities
     - Recommended talking points
     - Source citations with confidence scores
-  agent: knowledge_retriever
 
 analyze_competitors:
   description: >
@@ -41,13 +47,13 @@ analyze_competitors:
     - Keyword strategies used
     - Opportunities for differentiation
     - What to replicate vs avoid
-  agent: competitor_analyst
 
 develop_keyword_strategy:
   description: >
     Develop a comprehensive keyword strategy for the topic: {topic}.
     Identify 1 primary keyword and 2-3 secondary keywords.
     Consider search volume, competition, and alignment with topic and research findings.
+    Use the primary keyword: {primary_keyword} as the main target.
   expected_output: >
     Keyword strategy including:
     - Primary keyword with rationale
@@ -55,7 +61,6 @@ develop_keyword_strategy:
     - Long-tail keyword opportunities
     - Search intent analysis
     - Recommended keyword density
-  agent: seo_strategist
 
 generate_title_options:
   description: >
@@ -68,13 +73,13 @@ generate_title_options:
     - How-to guide formats
     - Thought leadership angles
     - Recommendation for best title with rationale
-  agent: content_structurer
 
 create_content_structure:
   description: >
     Create a detailed content structure and outline for the topic: {topic} 
     using the selected structure type: {structure_type}.
     Include section headings, key points, and content intent for each section.
+    This will serve as the blueprint for the final blog post.
   expected_output: >
     Comprehensive content outline with:
     - H1, H2, H3 heading structure
@@ -83,19 +88,19 @@ create_content_structure:
     - CTA placement recommendations
     - FAQ section if applicable
     - Estimated word count per section
-  agent: content_structurer
 
 generate_full_blog:
   description: >
     Generate a complete, high-quality blog post based on:
     - Topic: {topic}
-    - Outline: {outline}
+    - Structure Type: {structure_type}
+    - Primary Keyword: {primary_keyword}
     - Keywords: {keywords}
-    - Research findings: {research_findings}
-    - Brand voice guidelines
+    - Research Method: {research_method}
     
-    Create engaging content (up to 5000 words) with natural keyword integration,
-    proper citations, and brand voice consistency.
+    Use all previous task outputs including research findings, competitor analysis, 
+    keyword strategy, and content structure to create engaging content (up to 5000 words) 
+    with natural keyword integration, proper citations, and brand voice consistency.
   expected_output: >
     Complete blog post with:
     - Engaging introduction
@@ -106,7 +111,6 @@ generate_full_blog:
     - Meta description
     - Reading time and word count
     - SEO analysis summary
-  agent: blog_writer
 
 orchestrate_full_workflow:
   description: >
@@ -121,4 +125,3 @@ orchestrate_full_workflow:
     - SEO optimization metrics
     - Content quality assessment
     - Metadata (word count, reading time, etc.)
-  agent: blog_writer
