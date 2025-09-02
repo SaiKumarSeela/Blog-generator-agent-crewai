@@ -1,0 +1,63 @@
+{
+  "topic": "AI in Healthcare: Transforming Patient Care",
+  "title_options": [
+    {
+      "title": "AI in Healthcare: Revolutionizing Patient Care and Outcomes",
+      "type": "SEO-optimized",
+      "seo_score": 0.95,
+      "engagement_score": 0.85,
+      "rationale": "Strong keyword placement, emphasizes positive impact, and uses power words like 'revolutionizing'."
+    },
+    {
+      "title": "Top 7 Ways AI is Transforming Healthcare for the Better",
+      "type": "Listicle",
+      "seo_score": 0.9,
+      "engagement_score": 0.9,
+      "rationale": "Appealing listicle format, uses a positive framing, and incorporates the primary keyword."
+    },
+    {
+      "title": "How to Implement AI in Healthcare: A Practical Guide for Clinicians",
+      "type": "How-to guide",
+      "seo_score": 0.85,
+      "engagement_score": 0.8,
+      "rationale": "Targets a specific audience, offers practical advice, and uses relevant keywords."
+    },
+    {
+      "title": "The Future of AI in Healthcare: Ethical Considerations and Opportunities",
+      "type": "Thought leadership",
+      "seo_score": 0.8,
+      "engagement_score": 0.9,
+      "rationale": "Addresses a critical aspect of AI in healthcare, positions the content as forward-thinking, and uses compelling keywords."
+    },
+    {
+      "title": "AI in Healthcare: Improving Diagnostics, Treatment, and Patient Experience",
+      "type": "SEO-optimized",
+      "seo_score": 0.92,
+      "engagement_score": 0.88,
+      "rationale": "Highlights key benefits of AI in healthcare and incorporates relevant keywords naturally."
+    },
+    {
+      "title": "10 Essential AI Tools Transforming Healthcare Today",
+      "type": "Listicle",
+      "seo_score": 0.88,
+      "engagement_score": 0.92,
+      "rationale": "Focuses on practical applications and uses a compelling listicle format."
+    },
+    {
+      "title": "AI-Powered Healthcare: Overcoming Challenges and Achieving Success",
+      "type": "Thought leadership",
+      "seo_score": 0.85,
+      "engagement_score": 0.85,
+      "rationale": "Addresses the challenges and provides a solution-oriented approach, making it appealing to a wider audience."
+    }
+  ],
+  "recommended_title": "AI in Healthcare: Revolutionizing Patient Care and Outcomes",
+  "recommendation_rationale": "This title is a strong blend of SEO optimization, engagement, and clarity. It directly incorporates the primary keyword, emphasizes the positive impact of AI, and uses a powerful word ('revolutionizing') to capture attention.",
+  "seo_considerations": [
+    "Use relevant keywords naturally throughout the content.",
+    "Optimize meta descriptions for each title option.",
+    "Build high-quality backlinks to enhance search engine ranking.",
+    "Monitor keyword performance and adjust the strategy as needed."
+  ],
+  "generated_date": "2025-09-02"
+}
