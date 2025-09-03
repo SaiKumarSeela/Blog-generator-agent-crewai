@@ -1,32 +1,43 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, HttpUrl
-from typing import List, Optional, Dict, Any
+from typing import Dict, Any
 import uuid
 import json
 import os
 import tempfile
-import asyncio
 import re
 from datetime import datetime
 from pathlib import Path
 import logging
-import traceback
-
+from src.blog_generator_ai_agent.utils.constants import API_HOST,API_PORT
 from src.blog_generator_ai_agent.crew import BlogGeneratorCrew
-from src.blog_generator_ai_agent.models.pydantic_models import (
-    TopicGenerationOutput, ResearchOutput, CompetitorAnalysisOutput,
-    KeywordStrategyOutput, TitleGenerationOutput, ContentStructureOutput,
-    BlogGenerationOutput, CompleteWorkflowOutput
+
+from src.blog_generator_ai_agent.api.models import (
+    TopicRequest,
+    ResearchRequest,
+    CompetitorAnalysisRequest,
+    KeywordRequest,
+    TitleRequest,
+    StructureRequest,
+    OutlineRequest,
+    BlogGenerationRequest,
+    WorkflowRequest,
+    SessionResponse,
 )
+from src.blog_generator_ai_agent.api.exceptions import create_error_response, global_exception_handler
+from src.blog_generator_ai_agent.utils.utils import create_session, get_session, update_session, results_storage
+
 from dotenv import load_dotenv
+from src.blog_generator_ai_agent.logger import get_logger, LOGS_DIR
+from src.blog_generator_ai_agent.utils.setup_telemetry import setup_telemetry, instrument_fastapi_app, log_with_custom_dimensions
 
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+APPLICATIONINSIGHTS_CONNECTION_STRING = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING")
+if not APPLICATIONINSIGHTS_CONNECTION_STRING:
+    raise ValueError("APPLICATIONINSIGHTS_CONNECTION_STRING environment variable is required")
+
 
 app = FastAPI(
     title="Blog Generator AI Agent",
@@ -43,278 +54,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global storage for sessions (In production, use Redis/Database)
-sessions: Dict[str, Dict] = {}
-results_storage: Dict[str, Dict] = {}
+# Register global exception handler
+app.add_exception_handler(Exception, global_exception_handler)
 
 # Initialize the blog generator crew
 blog_crew = BlogGeneratorCrew()
 
-# Enhanced Error Handling Utilities
-class UserFriendlyError(Exception):
-    """Custom exception for user-friendly error messages"""
-    def __init__(self, message: str, technical_details: str = None, error_code: str = None):
-        self.message = message
-        self.technical_details = technical_details
-        self.error_code = error_code
-        super().__init__(self.message)
+tracer = setup_telemetry(service_name="Blog-generator-fastapi-azure-insights",connection_string=APPLICATIONINSIGHTS_CONNECTION_STRING )
+instrument_fastapi_app(app)
 
-def extract_user_friendly_error(error: Exception) -> Dict[str, Any]:
-    """Extract user-friendly error message from various exception types"""
-    error_str = str(error).lower()
-    error_traceback = traceback.format_exc()
-    
-    # Common AI/API errors
-    if "rate limit" in error_str or "quota" in error_str or "429" in error_str:
-        return {
-            "user_message": "We've hit our AI service limit for today. Please try again tomorrow or upgrade your plan.",
-            "technical_details": "Rate limit exceeded - API quota reached",
-            "error_code": "RATE_LIMIT_EXCEEDED",
-            "suggestions": [
-                "Wait a few minutes and try again",
-                "Check your AI service plan and billing",
-                "Consider upgrading to a higher tier plan"
-            ]
-        }
-    
-    elif "authentication" in error_str or "unauthorized" in error_str or "401" in error_str:
-        return {
-            "user_message": "Authentication failed. Please check your API keys and credentials.",
-            "technical_details": "Authentication/authorization error",
-            "error_code": "AUTHENTICATION_FAILED",
-            "suggestions": [
-                "Verify your API keys are correct",
-                "Check if your account has proper permissions",
-                "Ensure your subscription is active"
-            ]
-        }
-    
-    elif "timeout" in error_str or "timed out" in error_str:
-        return {
-            "user_message": "The request took too long to complete. Please try again with a simpler request.",
-            "technical_details": "Request timeout exceeded",
-            "error_code": "REQUEST_TIMEOUT",
-            "suggestions": [
-                "Try breaking down your request into smaller parts",
-                "Check your internet connection",
-                "Wait a few minutes and try again"
-            ]
-        }
-    
-    elif "network" in error_str or "connection" in error_str:
-        return {
-            "user_message": "Network connection issue. Please check your internet connection and try again.",
-            "technical_details": "Network connectivity problem",
-            "error_code": "NETWORK_ERROR",
-            "suggestions": [
-                "Check your internet connection",
-                "Try refreshing the page",
-                "Check if the service is available"
-            ]
-        }
-    
-    elif "memory" in error_str or "out of memory" in error_str:
-        return {
-            "user_message": "The system is running low on memory. Please try a simpler request or contact support.",
-            "technical_details": "Memory allocation error",
-            "error_code": "MEMORY_ERROR",
-            "suggestions": [
-                "Try a simpler request",
-                "Close other applications",
-                "Contact support if the issue persists"
-            ]
-        }
-    
-    elif "validation" in error_str or "invalid" in error_str:
-        return {
-            "user_message": "The input data is not valid. Please check your input and try again.",
-            "technical_details": "Input validation error",
-            "error_code": "VALIDATION_ERROR",
-            "suggestions": [
-                "Review your input data",
-                "Check required fields are filled",
-                "Ensure data format is correct"
-            ]
-        }
-    
-    elif "litellm" in error_str or "vertexai" in error_str or "gemini" in error_str:
-        if "quota" in error_str or "free_tier" in error_str:
-            return {
-                "user_message": "You've reached the free tier limit for AI services. Please upgrade your plan or try again tomorrow.",
-                "technical_details": "AI service quota exceeded",
-                "error_code": "AI_QUOTA_EXCEEDED",
-                "suggestions": [
-                    "Upgrade to a paid plan for higher limits",
-                    "Wait until tomorrow when limits reset",
-                    "Use a different AI service provider"
-                ]
-            }
-        else:
-            return {
-                "user_message": "AI service is temporarily unavailable. Please try again in a few minutes.",
-                "technical_details": "AI service error",
-                "error_code": "AI_SERVICE_ERROR",
-                "suggestions": [
-                    "Wait a few minutes and try again",
-                    "Check if the AI service is operational",
-                    "Contact support if the issue persists"
-                ]
-            }
-    
-    # Default error message
-    else:
-        return {
-            "user_message": "Something went wrong. Please try again or contact support if the issue persists.",
-            "technical_details": f"Unexpected error: {str(error)}",
-            "error_code": "UNKNOWN_ERROR",
-            "suggestions": [
-                "Try refreshing the page",
-                "Check your input data",
-                "Contact support with error details"
-            ]
-        }
+# Configure custom logger
+logger = get_logger("Blog-generator-fastapi-azure-insights")
+logger.info(f"Logger initialized. Logs directory: {LOGS_DIR}")
 
-def create_error_response(error: Exception, session_id: str = None) -> Dict[str, Any]:
-    """Create a standardized error response"""
-    error_info = extract_user_friendly_error(error)
-    
-    # Log the full error for debugging
-    logger.error(f"Error occurred: {str(error)}")
-    logger.error(f"Traceback: {traceback.format_exc()}")
-    
-    response = {
-        "status": "error",
-        "error": error_info,
-        "timestamp": datetime.now().isoformat()
-    }
-    
-    if session_id:
-        response["session_id"] = session_id
-    
-    return response
-
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Global exception handler for unhandled errors"""
-    error_response = create_error_response(exc)
-    return JSONResponse(
-        status_code=500,
-        content=error_response
-    )
-
-# Enhanced Request Models
-class TopicRequest(BaseModel):
-    pillar: str = Field(..., description="Content pillar for topic generation")
-
-class ResearchRequest(BaseModel):
-    """Request model for research endpoint."""
-    topic: str = Field(..., min_length=3, max_length=200, description="Topic to research")
-    mode: str = Field(..., pattern="^(SERP|RAG|reference)$", description="Research mode: SERP, RAG, or reference")
-    urls: List[HttpUrl] = Field(default_factory=list, description="List of URLs to include in research")
-    uploads: List[str] = Field(default_factory=list, description="List of uploaded file references")
-    research_method: str = Field("SERP", pattern="^(SERP|RAG|reference)$", 
-                               description="Research method to use (SERP, RAG, reference)")
-    pillar: Optional[str] = Field(None, min_length=3, max_length=100, 
-                                 description="Content pillar for the research")
-
-class CompetitorAnalysisRequest(BaseModel):
-    urls: List[str] = Field(..., description="Competitor URLs to analyze")
-    topic: str = Field(..., description="Topic for competitor analysis")
-    research_method: str = Field("SERP", description="Research method to use (SERP, RAG, reference)")
-
-class KeywordRequest(BaseModel):
-    topic: str = Field(..., description="Topic for keyword generation")
-    findings: Optional[str] = Field(None, description="Research findings")
-    primary_keyword: Optional[str] = Field(None, description="Optional primary keyword")
-    research_method: str = Field(default="SERP", description="Research method to use")
-    pillar: Optional[str] = Field(None, description="Content pillar")
-
-class TitleRequest(BaseModel):
-    topic: str = Field(..., description="Topic for title generation")
-    primary: str = Field(..., description="Primary keyword")
-    secondary: List[str] = Field(..., description="Secondary keywords")
-    research_method: str = Field("SERP", description="Research method to use")
-
-class StructureRequest(BaseModel):
-    topic: str = Field(..., description="Topic for structure")
-    structure_type: str = Field(..., description="Structure type")
-    keywords: Dict[str, Any] = Field(..., description="Keyword strategy")
-    primary_keyword: str = Field(..., description="Primary keyword for the content")
-    research_method: str = Field("SERP", description="Research method to use")
-
-class OutlineRequest(BaseModel):
-    topic: str = Field(..., description="Topic for outline")
-    structure: str = Field(..., description="Content structure type")
-    keywords: Dict[str, Any] = Field(..., description="Keyword strategy")
-    research_method: str = Field("SERP", description="Research method to use")
-
-class BlogGenerationRequest(BaseModel):
-    topic: str = Field(..., description="Blog topic")
-    structure_type: str = Field(..., description="Structure type")
-    primary_keyword: str = Field(..., description="Primary keyword")
-    keywords: Dict[str, Any] = Field(..., description="Keywords")
-    brand_voice: str = Field(default="professional, helpful, concise", description="Brand voice guidelines")
-    research_method: str = Field("SERP", description="Research method to use")
-
-class WorkflowRequest(BaseModel):
-    topic: str = Field(..., description="Blog topic")
-    pillar: str = Field(..., description="Content pillar")
-    mode: str = Field(default="SERP", description="Research mode")
-    urls: Optional[List[str]] = None
-    uploads: Optional[List[str]] = None
-    structure: str = Field(default="How-to Guide", description="Blog structure type")
-    brand_voice: str = Field(default="professional, helpful, concise", description="Brand voice")
-
-# Enhanced Response Models using Pydantic models
-class SessionResponse(BaseModel):
-    session_id: str
-    status: str
-    message: str
-
-# Utility functions
-def create_session() -> str:
-    """Create a new session ID"""
-    session_id = str(uuid.uuid4())
-    sessions[session_id] = {
-        "created_at": datetime.now().isoformat(),
-        "status": "active",
-        "steps_completed": []
-    }
-    return session_id
-
-def get_session(session_id: str) -> Dict:
-    """Get session data"""
-    if session_id not in sessions:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return sessions[session_id]
-
-def update_session(session_id: str, step: str, data: Any):
-    """Update session with step completion"""
-    session = get_session(session_id)
-    session["steps_completed"].append(step)
-    session["last_updated"] = datetime.now().isoformat()
-    results_storage[f"{session_id}_{step}"] = data
-
-def convert_pydantic_to_dict(data):
-    """Convert Pydantic model to dictionary for JSON serialization"""
-    if hasattr(data, 'model_dump'):
-        return data.model_dump()
-    elif hasattr(data, 'dict'):
-        return data.dict()
-    else:
-        return data
 
 # API Endpoints with Structured Outputs
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    with tracer.start_as_current_span("health_check_endpoint") as span:
+        try:
+            span.set_attribute("Http.Status",200)
+            
+            logger.debug("Health check requested")
+            log_with_custom_dimensions(logger, logging.INFO, "Fastapi run sucessfully",{
+                "operation":"health_check",
+                "status":200
+            })
+
+            return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+        except Exception as e:
+            span.record_exception(e)
+            span.set_attribute("error.type", type(e).__name__)
+            span.set_attribute("error.message", str(e))
+            log_with_custom_dimensions(logger, logging.INFO, "Error during health check",{
+               "operation":"health_check",
+                "status":500
+            })
+            raise HTTPException(
+                status_code=500,
+                detail=f"An error occurred: {str(e)}"
+            )
+
 
 @app.get("/test/crew")
 async def test_crew():
     """Test endpoint to check crew functionality"""
     try:
+        logger.info("/test/crew called")
         test_inputs = {
             "topic": "test topic",
             "competitor_urls": ["https://example.com"],
@@ -328,6 +115,7 @@ async def test_crew():
         
         crew_methods = [method for method in dir(blog_crew) if not method.startswith('_')]
         
+        logger.info(f"Crew methods discovered: {len(crew_methods)}")
         return {
             "status": "healthy",
             "crew_available": True,
@@ -345,6 +133,7 @@ async def generate_topics(request: TopicRequest):
     """Generate topic suggestions based on pillar with structured output"""
     try:
         session_id = create_session()
+        logger.info(f"/topic/generate started | session_id={session_id} | pillar={request.pillar}")
         
         inputs = {
             "pillar": request.pillar,
@@ -352,7 +141,7 @@ async def generate_topics(request: TopicRequest):
             "research_method": "SERP"
         }
         
-        logger.info(f"Starting topic generation for pillar: {request.pillar}")
+        logger.debug(f"Topic generation inputs: {inputs}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_topic_generation(inputs)
@@ -361,7 +150,7 @@ async def generate_topics(request: TopicRequest):
         update_session(session_id, "topic_generation", result_data)
         
         topics_count = len(result_data.get("topics", []))
-        logger.info(f"Generated {topics_count} topics for session {session_id}")
+        logger.info(f"/topic/generate completed | session_id={session_id} | topics_count={topics_count}")
         
         # Return the actual data directly in the response
         return {
@@ -399,18 +188,18 @@ async def run_research(request: ResearchRequest):
     session_id = create_session()
     
     try:
-        logger.info(f"Starting research session: {session_id}")
+        logger.info(f"/research/run started | session_id={session_id} | topic={request.topic} | mode={request.mode}")
         
         inputs = {
             "topic": request.topic.strip(),
-            "research_method": request.research_method.upper(),
+            "research_method": request.mode.upper(),  # Use mode as research_method
             "mode": request.mode.upper(),
             "urls": [str(url) for url in request.urls if url],
             "uploads": [upload for upload in request.uploads if upload],
             "pillar": (request.pillar or request.topic).strip()
         }
         
-        logger.info(f"Research inputs: {inputs}")
+        logger.debug(f"Research inputs: urls_count={len(inputs['urls'])}, uploads_count={len(inputs['uploads'])}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_research_only(inputs)
@@ -418,7 +207,7 @@ async def run_research(request: ResearchRequest):
         update_session(session_id, "research", result_data)
         
         findings_count = len(result_data.get("findings", []))
-        logger.info(f"Research completed successfully for session {session_id} with {findings_count} findings")
+        logger.info(f"/research/run completed | session_id={session_id} | findings_count={findings_count}")
         
         # Return the actual data directly in the response
         return {
@@ -438,7 +227,7 @@ async def run_research(request: ResearchRequest):
         # Create fallback response structure
         fallback_data = {
             "topic": request.topic,
-            "research_method": request.research_method,
+            "research_method": request.mode,
             "key_insights": [],
             "statistics": [],
             "findings": [],
@@ -470,7 +259,7 @@ async def analyze_competitors(request: CompetitorAnalysisRequest):
             "pillar": request.topic
         }
         
-        logger.info(f"Starting competitor analysis for {len(request.urls)} URLs")
+        logger.info(f"/competitors/analyse started | session_id={session_id} | urls_count={len(request.urls)}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_competitor_analysis(inputs)
@@ -478,7 +267,7 @@ async def analyze_competitors(request: CompetitorAnalysisRequest):
         update_session(session_id, "competitor_analysis", result_data)
         
         competitors_count = len(result_data.get("competitor_summaries", []))
-        logger.info(f"Competitor analysis completed for {len(request.urls)} URLs")
+        logger.info(f"/competitors/analyse completed | session_id={session_id} | analyzed_count={competitors_count}")
         
         # Return the actual data directly in the response
         return {
@@ -524,7 +313,7 @@ async def generate_keywords(request: KeywordRequest):
             "research_method": request.research_method
         }
         
-        logger.info(f"Starting keyword strategy for topic: {request.topic}")
+        logger.info(f"/seo/keywords started | session_id={session_id} | topic={request.topic}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_keyword_strategy(inputs)
@@ -532,7 +321,7 @@ async def generate_keywords(request: KeywordRequest):
         update_session(session_id, "keyword_strategy", result_data)
         
         primary_kw = result_data.get("strategy", {}).get("primary_keyword", primary_keyword)
-        logger.info(f"Keyword strategy completed for topic: {request.topic}")
+        logger.info(f"/seo/keywords completed | session_id={session_id} | primary='{primary_kw}'")
         
         # Return the actual data directly in the response
         return {
@@ -581,7 +370,7 @@ async def generate_titles(request: TitleRequest):
             "research_method": request.research_method
         }
         
-        logger.info(f"Starting title generation for topic: {request.topic}")
+        logger.info(f"/titles/generate started | session_id={session_id} | topic={request.topic}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_title_generation(inputs)
@@ -589,7 +378,7 @@ async def generate_titles(request: TitleRequest):
         update_session(session_id, "title_generation", result_data)
         
         titles_count = len(result_data.get("title_options", []))
-        logger.info(f"Generated {titles_count} title options")
+        logger.info(f"/titles/generate completed | session_id={session_id} | titles_count={titles_count}")
         
         # Return the actual data directly in the response
         return {
@@ -635,7 +424,7 @@ async def create_structure(request: StructureRequest):
             "research_method": request.research_method
         }
         
-        logger.info(f"Creating structure for topic: {request.topic}, type: {request.structure_type}")
+        logger.info(f"/structure/create started | session_id={session_id} | topic={request.topic} | type={request.structure_type}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_content_structure(inputs)
@@ -643,7 +432,7 @@ async def create_structure(request: StructureRequest):
         update_session(session_id, "content_structure", result_data)
         
         sections_count = len(result_data.get("sections", []))
-        logger.info(f"Content structure created with {sections_count} sections")
+        logger.info(f"/structure/create completed | session_id={session_id} | sections_count={sections_count}")
         
         # Return the actual data directly in the response
         return {
@@ -691,7 +480,7 @@ async def generate_blog(request: BlogGenerationRequest):
             "research_method": request.research_method
         }
         
-        logger.info("Starting blog generation")
+        logger.info(f"/blog/generate started | session_id={session_id} | topic={request.topic} | structure={request.structure_type}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_blog_writing(inputs)
@@ -712,10 +501,10 @@ async def generate_blog(request: BlogGenerationRequest):
                     result_data['metadata'] = {}
                 result_data['metadata']['word_count'] = word_count
                 
-                logger.info(f"Blog generated successfully: {word_count} words")
+                logger.info(f"/blog/generate completed | session_id={session_id} | word_count={word_count}")
         
         if word_count == 0:
-            logger.warning("Blog generation completed but word count is 0 - possible parsing issue")
+            logger.warning(f"/blog/generate warning | session_id={session_id} | word_count=0 (possible parsing issue)")
         
         # Return the actual data directly in the response
         return {
@@ -769,14 +558,14 @@ async def run_complete_workflow(request: WorkflowRequest):
         if request.uploads:
             inputs["uploads"] = request.uploads
         
-        logger.info(f"Starting complete workflow for topic: {request.topic}")
+        logger.info(f"/workflow/run started | session_id={session_id} | topic={request.topic} | mode={request.mode}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_workflow(inputs)
         
         update_session(session_id, "complete_workflow", result_data)
         
-        logger.info(f"Complete workflow executed successfully")
+        logger.info(f"/workflow/run completed | session_id={session_id} | final_status={result_data.get('final_status', 'completed')} | total_time={result_data.get('total_execution_time', 'unknown')}")
         
         # Return the actual data directly in the response
         return {
@@ -832,7 +621,7 @@ async def upload_file(file: UploadFile = File(...)):
             content = await file.read()
             buffer.write(content)
         
-        logger.info(f"File uploaded successfully: {file.filename}")
+        logger.info(f"/upload completed | filename={file.filename} | size={len(content)} | saved_to={file_path}")
         
         return {
             "filename": file.filename,
@@ -856,7 +645,7 @@ async def upload_file(file: UploadFile = File(...)):
         )
 
 
-@app.get("/sessions/{session_id}")
+@app.get("/export/{session_id}")
 async def get_session_status(session_id: str):
     """Get session status and completed steps"""
     try:
@@ -899,7 +688,7 @@ async def get_session_status(session_id: str):
             content=error_response
         )
 
-@app.get("/sessions/{session_id}/step/{step_name}")
+@app.get("/export/{session_id}/step/{step_name}")
 async def get_step_output(session_id: str, step_name: str):
     """Get detailed output for a specific workflow step"""
     try:
@@ -941,11 +730,13 @@ async def get_step_output(session_id: str, step_name: str):
 async def list_output_files():
     """List all JSON output files created by the system"""
     try:
-        output_dir = Path('output')
+        output_dir = Path('Artifacts')
         if not output_dir.exists():
+            logger.info("/output/files | Artifacts directory not found")
             return {"files": [], "message": "No output directory found"}
         
         json_files = list(output_dir.glob('*.json'))
+        logger.info(f"/output/files | found {len(json_files)} json files in {output_dir}")
         file_info = []
         
         for file_path in json_files:
@@ -960,6 +751,7 @@ async def list_output_files():
                         "preview": str(data)[:200] + "..." if len(str(data)) > 200 else str(data)
                     })
             except Exception as e:
+                logger.warning(f"/output/files | failed to read {file_path}: {e}")
                 file_info.append({
                     "filename": file_path.name,
                     "size": file_path.stat().st_size,
@@ -989,7 +781,7 @@ async def list_output_files():
 async def download_output_file(filename: str):
     """Download a specific JSON output file"""
     try:
-        output_dir = Path('output')
+        output_dir = Path('Artifacts')
         file_path = output_dir / filename
         
         if not file_path.exists():
@@ -998,6 +790,7 @@ async def download_output_file(filename: str):
         if not filename.endswith('.json'):
             raise HTTPException(status_code=400, detail="Only JSON files can be downloaded")
         
+        logger.info(f"/output/download | filename={filename} | path={file_path}")
         return FileResponse(
             path=str(file_path),
             filename=filename,
@@ -1020,4 +813,4 @@ async def download_output_file(filename: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8085)
+    uvicorn.run(app, host=API_HOST, port=API_PORT)

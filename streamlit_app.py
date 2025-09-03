@@ -9,7 +9,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from io import StringIO
 import base64
-
+from src.blog_generator_ai_agent.utils.constants import API_BASE_URL
+from src.blog_generator_ai_agent.logger import get_logger, LOGS_DIR
 # Page configuration
 st.set_page_config(
     page_title="Blog Generator AI Agent",
@@ -112,7 +113,7 @@ st.markdown("""
 
 # Configuration
 class Config:
-    API_BASE_URL = "http://localhost:8085"
+    API_BASE_URL = API_BASE_URL
     
     # API endpoints
     ENDPOINTS = {
@@ -126,11 +127,15 @@ class Config:
         "workflow_run": "/workflow/run",
         "upload": "/upload",
         "health": "/health",
-        "session_status": "/sessions/{session_id}",
-        "step_output": "/sessions/{session_id}/step/{step_name}"
+        "session_status": "/export/{session_id}",
+        "step_output": "/export/{session_id}/step/{step_name}"
     }
 
 config = Config()
+
+# Initialize logger
+logger = get_logger("streamlit_app")
+logger.info(f"Logger initialized in Streamlit. Logs directory: {LOGS_DIR}")
 
 # Initialize session state
 def init_session_state():
@@ -219,8 +224,14 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
     url = f"{config.API_BASE_URL}{endpoint}"
     
     try:
+        logger.info(f"API request | method={method} | url={url}")
+        if data:
+            # Avoid logging huge payloads - summarize
+            keys = list(data.keys())
+            logger.debug(f"API request payload keys: {keys[:10]}{'...' if len(keys) > 10 else ''}")
         if method == "POST":
             if files:
+                logger.info(f"Uploading files: {[name for name in files.keys()]} to {endpoint}")
                 response = requests.post(url, data=data, files=files, timeout=300)
             else:
                 response = requests.post(url, json=data, timeout=300)
@@ -228,9 +239,17 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
             response = requests.get(url, timeout=60)
         
         response.raise_for_status()
-        return response.json()
+        json_resp = response.json()
+        # Log a compact summary of response
+        if isinstance(json_resp, dict):
+            top_keys = list(json_resp.keys())
+            logger.info(f"API response | status={response.status_code} | keys={top_keys[:10]}")
+        else:
+            logger.info(f"API response | status={response.status_code} | type={type(json_resp).__name__}")
+        return json_resp
     
     except requests.exceptions.Timeout:
+        logger.error(f"API request timeout | url={url}")
         error_response = {
             "error": {
                 "user_message": "The request took too long to complete. Please try again with a simpler request.",
@@ -247,6 +266,7 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
         return error_response
     
     except requests.exceptions.ConnectionError:
+        logger.error(f"API connection error | url={url}")
         error_response = {
             "error": {
                 "user_message": "Cannot connect to the server. Please check if the service is running.",
@@ -263,6 +283,7 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
         return error_response
     
     except requests.exceptions.RequestException as e:
+        logger.error(f"API request exception | url={url} | error={str(e)}")
         error_response = {
             "error": {
                 "user_message": "Network request failed. Please check your connection and try again.",
@@ -279,6 +300,7 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
         return error_response
     
     except json.JSONDecodeError as e:
+        logger.error(f"API invalid JSON response | url={url} | error={str(e)}")
         error_response = {
             "error": {
                 "user_message": "Received invalid response from server. Please try again.",
@@ -295,6 +317,7 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
         return error_response
     
     except Exception as e:
+        logger.exception(f"Unexpected error during API request | url={url}")
         error_response = {
             "error": {
                 "user_message": "An unexpected error occurred. Please try again or contact support.",
@@ -313,9 +336,11 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
 def check_api_health() -> bool:
     """Check if API is healthy"""
     try:
+        logger.debug("Checking API health")
         response = make_api_request(config.ENDPOINTS["health"])
         return response.get("status") == "healthy"
     except:
+        logger.warning("API health check failed")
         return False
 
 # UI Components
@@ -506,6 +531,7 @@ def render_topic_generation_page():
     if submitted and pillar:
         with st.spinner("🔄 Generating topic suggestions..."):
             request_data = {"pillar": pillar}
+            logger.info("Submitting Topic Generation request")
             response = make_api_request(
                 config.ENDPOINTS["topic_generate"],
                 method="POST",
@@ -526,6 +552,7 @@ def render_topic_generation_page():
                 st.session_state.session_id = response.get("session_id")
                 st.session_state.workflow_data['topic_generation'] = response
                 st.success("✅ Topic generation completed!")
+                logger.info(f"Topic generation success | session_id={st.session_state.session_id}")
             
             # Display generated topics
             topics = response.get("topics", [])
@@ -550,6 +577,7 @@ def render_topic_generation_page():
                     with col2:
                         if st.button("Continue to Research →", use_container_width=True):
                             st.session_state.current_step = 'research'
+                            logger.info("Navigating to Research step")
                             st.rerun()
             
             render_json_viewer(response, "Topic Generation Response")
@@ -647,6 +675,7 @@ def render_research_page():
                 "pillar": pillar
             }
             
+            logger.info("Submitting Research request")
             response = make_api_request(
                 config.ENDPOINTS["research_run"],
                 method="POST",
@@ -687,6 +716,7 @@ def render_research_page():
             
             if st.button("Continue to Competitor Analysis →", use_container_width=True):
                 st.session_state.current_step = 'competitors'
+                logger.info("Navigating to Competitors step")
                 st.rerun()
             
             render_json_viewer(response, "Research Response")
@@ -746,6 +776,7 @@ def render_competitor_analysis_page():
                 "research_method": "SERP"
             }
             
+            logger.info("Submitting Competitor Analysis request")
             response = make_api_request(
                 config.ENDPOINTS["competitors_analyse"],
                 method="POST",
@@ -783,6 +814,7 @@ def render_competitor_analysis_page():
             
             if st.button("Continue to Keywords →", use_container_width=True):
                 st.session_state.current_step = 'keywords'
+                logger.info("Navigating to Keywords step")
                 st.rerun()
             
             render_json_viewer(response, "Competitor Analysis Response")
@@ -854,6 +886,7 @@ def render_keywords_page():
                 "research_method": "SERP"
             }
             
+            logger.info("Submitting Keyword Strategy request")
             response = make_api_request(
                 config.ENDPOINTS["seo_keywords"],
                 method="POST",
@@ -899,6 +932,7 @@ def render_keywords_page():
             
             if st.button("Continue to Titles →", use_container_width=True):
                 st.session_state.current_step = 'titles'
+                logger.info("Navigating to Titles step")
                 st.rerun()
             
             render_json_viewer(response, "Keywords Response")
@@ -965,6 +999,7 @@ def render_titles_page():
                 "research_method": "SERP"
             }
             
+            logger.info("Submitting Title Generation request")
             response = make_api_request(
                 config.ENDPOINTS["titles_generate"],
                 method="POST",
@@ -1005,6 +1040,7 @@ def render_titles_page():
                     
                     if st.button("Continue to Structure →", use_container_width=True):
                         st.session_state.current_step = 'structure'
+                        logger.info("Navigating to Structure step")
                         st.rerun()
             
             render_json_viewer(response, "Title Generation Response")
@@ -1069,6 +1105,7 @@ def render_structure_page():
                 "research_method": "SERP"
             }
             
+            logger.info("Submitting Structure Creation request")
             response = make_api_request(
                 config.ENDPOINTS["structure_create"],
                 method="POST",
@@ -1102,6 +1139,7 @@ def render_structure_page():
             
             if st.button("Continue to Blog Generation →", use_container_width=True):
                 st.session_state.current_step = 'blog'
+                logger.info("Navigating to Blog step")
                 st.rerun()
             
             render_json_viewer(response, "Content Structure Response")
@@ -1178,6 +1216,7 @@ def render_blog_generation_page():
                 "research_method": "SERP"
             }
             
+            logger.info("Submitting Blog Generation request")
             response = make_api_request(
                 config.ENDPOINTS["blog_generate"],
                 method="POST",
@@ -1371,6 +1410,7 @@ def render_complete_workflow_page():
             status_text.text("Executing workflow steps...")
             progress_bar.progress(0.5)
             
+            logger.info("Submitting Complete Workflow request")
             response = make_api_request(
                 config.ENDPOINTS["workflow_run"],
                 method="POST",

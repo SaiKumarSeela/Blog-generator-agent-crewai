@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from pydantic import Field
 from serpapi import GoogleSearch
+from src.blog_generator_ai_agent.utils.constants import EMBEDDING_MODEL_RAG, CHUNK_SIZE, CHUNK_OVERLAP
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
@@ -51,7 +53,7 @@ class EnhancedRAGTool(BaseTool):
     def _initialize(self):
         """Initialize embeddings model and services"""
         try:
-            embeddings_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+            embeddings_model = SentenceTransformer(EMBEDDING_MODEL_RAG)
             object.__setattr__(self, 'embeddings_model', embeddings_model)
             logger.info("Embeddings model loaded successfully")
         except Exception as e:
@@ -108,8 +110,8 @@ class EnhancedRAGTool(BaseTool):
                 pages = loader.load()
                 
                 text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=800,
-                    chunk_overlap=100
+                    chunk_size=CHUNK_SIZE,
+                    chunk_overlap=CHUNK_OVERLAP
                 )
                 
                 for page in pages:
@@ -161,8 +163,8 @@ class EnhancedRAGTool(BaseTool):
                     content = f.read()
                 
                 text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=800,
-                    chunk_overlap=100
+                    chunk_size=CHUNK_SIZE,
+                    chunk_overlap=CHUNK_OVERLAP
                 )
                 chunks = text_splitter.split_text(content)
                 
@@ -210,8 +212,8 @@ class EnhancedRAGTool(BaseTool):
                     continue
                 
                 text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=800,
-                    chunk_overlap=100
+                    chunk_size=CHUNK_SIZE,
+                    chunk_overlap=CHUNK_OVERLAP
                 )
                 chunks = text_splitter.split_text(content)
                 
@@ -473,6 +475,20 @@ class ResearchModeTool(BaseTool):
     def internal_knowledge_retrieval(self, topic: str, top_k: int = 5) -> Dict[str, Any]:
         """Retrieve from internal knowledge base"""
         try:
+            # Check if knowledge base has documents
+            if not self.rag_tool.documents or len(self.rag_tool.documents) == 0:
+                return {
+                    "research_mode": "internal_knowledge_base",
+                    "error": "No documents in knowledge base. Please upload files first or use SERP mode for web research.",
+                    "topic": topic,
+                    "findings": [],
+                    "suggestions": [
+                        "Upload PDF, Markdown, or text files to build your knowledge base",
+                        "Use SERP mode for web-based research instead",
+                        "Check if files were properly uploaded and processed"
+                    ]
+                }
+            
             rag_result = self.rag_tool.retrieve(topic, top_k)
             
             if "error" in rag_result:
@@ -586,7 +602,6 @@ class ResearchModeTool(BaseTool):
         try:
             # Handle JSON input from agents
             if isinstance(mode, str) and mode.startswith('{'):
-                
                 try:
                     parsed_input = json.loads(mode)
                     mode = parsed_input.get('mode', mode)
@@ -594,18 +609,58 @@ class ResearchModeTool(BaseTool):
                 except json.JSONDecodeError:
                     pass
             
-            # Normalize mode names
-            mode_lower = mode.lower()
+            # Handle dict input
+            if isinstance(mode, dict):
+                mode = mode.get('mode', 'serp')
+                topic = mode.get('topic', topic)
             
-            if mode_lower in ["serp", "a", "serp_analysis"]:
+            # Normalize mode names - handle various input formats
+            if isinstance(mode, str):
+                mode_lower = mode.lower().strip()
+            else:
+                mode_lower = str(mode).lower().strip()
+            
+            # Map various mode names to standard modes
+            mode_mapping = {
+                # SERP modes
+                "serp": "serp",
+                "a": "serp", 
+                "serp_analysis": "serp",
+                "web_search": "serp",
+                "google_search": "serp",
+                "search": "serp",
+                
+                # RAG modes
+                "rag": "rag",
+                "b": "rag",
+                "internal_knowledge_base": "rag",
+                "knowledge_base": "rag",
+                "internal": "rag",
+                "local": "rag",
+                "documents": "rag",
+                
+                # Reference modes
+                "reference": "reference",
+                "c": "reference",
+                "reference_articles": "reference",
+                "upload": "reference",
+                "uploaded": "reference",
+                "files": "reference"
+            }
+            
+            # Get the normalized mode
+            normalized_mode = mode_mapping.get(mode_lower, mode_lower)
+            
+            # Execute based on normalized mode
+            if normalized_mode == "serp":
                 num_results = kwargs.get("num_results", 10)
                 result = self.serp_analysis(topic, num_results)
             
-            elif mode_lower in ["rag", "b", "internal_knowledge_base", "knowledge_base"]:
+            elif normalized_mode == "rag":
                 top_k = kwargs.get("top_k", 10)
                 result = self.internal_knowledge_retrieval(topic, top_k)
             
-            elif mode_lower in ["reference", "c", "reference_articles", "upload"]:
+            elif normalized_mode == "reference":
                 content_list = kwargs.get("content_list", [])
                 result = self.process_reference_articles(content_list, topic)
             
@@ -614,7 +669,13 @@ class ResearchModeTool(BaseTool):
                     "error": f"Unknown research mode: '{mode}'. Valid modes are: 'serp' (for web search), 'rag' (for knowledge base), or 'reference' (for uploaded content)",
                     "valid_modes": ["serp", "rag", "reference"],
                     "mode_received": mode,
-                    "topic": topic
+                    "normalized_mode": normalized_mode,
+                    "topic": topic,
+                    "suggestions": [
+                        "Use 'serp' for web-based research",
+                        "Use 'rag' for knowledge base queries",
+                        "Use 'reference' for uploaded file analysis"
+                    ]
                 }
             
             return json.dumps(result, indent=2)
@@ -625,7 +686,12 @@ class ResearchModeTool(BaseTool):
                 "error": str(e),
                 "mode": mode,
                 "topic": topic,
-                "valid_modes": ["serp", "rag", "reference"]
+                "valid_modes": ["serp", "rag", "reference"],
+                "suggestions": [
+                    "Check the mode parameter format",
+                    "Ensure topic is provided",
+                    "Verify all required parameters are set"
+                ]
             }, indent=2)
 
 class CompetitorAnalysisTool(BaseTool):
@@ -942,56 +1008,3 @@ class WebSearchTool(BaseTool):
                 "results": []
             }, indent=2)
 
-# Usage Examples and Setup Instructions
-"""
-SETUP INSTRUCTIONS:
-1. Install required packages:
-   pip install crewai sentence-transformers faiss-cpu langchain-community firecrawl-py beautifulsoup4 requests
-
-2. Set environment variables:
-   export SERP_API_KEY="your_serp_api_key"
-   export FIRECRAWL_API_KEY="your_firecrawl_api_key"  # Optional
-
-3. Create knowledge base directory:
-   mkdir knowledge
-
-USAGE EXAMPLES:
-
-# Initialize RAG Tool
-rag_tool = EnhancedRAGTool()
-
-# Add different types of documents
-pdf_result = rag_tool.add_pdf_documents(["document1.pdf", "document2.pdf"])
-md_result = rag_tool.add_markdown_documents(["guide1.md", "guide2.md"])
-url_result = rag_tool.add_url_documents(["https://example.com/article1", "https://example.com/article2"])
-
-# Research Mode Tool
-research_tool = ResearchModeTool()
-
-# SERP Analysis (Mode A)
-serp_results = research_tool._run("serp", "content marketing strategies", num_results=10)
-
-# RAG Retrieval (Mode B)  
-rag_results = research_tool._run("rag", "content marketing strategies", top_k=10)
-
-# Reference Articles (Mode C)
-reference_articles = [
-    {"type": "url", "content": "https://example.com/article", "source": "Article 1"},
-    {"type": "markdown", "content": "# Content\nSample markdown content", "source": "Article 2"}
-]
-ref_results = research_tool._run("reference", "content marketing", content_list=reference_articles)
-
-# Competitor Analysis
-competitor_tool = CompetitorAnalysisTool()
-competitor_results = competitor_tool._run("content marketing strategies", num_competitors=5)
-
-# Web Search
-search_tool = WebSearchTool()
-search_results = search_tool._run("latest content marketing trends 2025", num_results=10)
-
-ERROR HANDLING:
-- All tools return error messages in JSON format when API keys are missing
-- File not found errors are captured and returned in results
-- Network errors and API failures are logged and returned as error responses
-- No mock data is generated - real errors are shown to help debugging
-"""

@@ -14,7 +14,7 @@ from .utils.utils import load_yaml_config
 import json
 from datetime import datetime
 import re
-
+from .utils.constants import LLM_MODEL
 load_dotenv()
 
 
@@ -30,7 +30,7 @@ class BlogGeneratorCrew():
         memory_dir = project_root / 'memory'
         memory_dir.mkdir(parents=True, exist_ok=True)
         
-        output_dir = project_root / 'output'
+        output_dir = project_root / 'Artifacts'
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Set paths
@@ -60,7 +60,7 @@ class BlogGeneratorCrew():
         # Initialize Gemini LLM with rate limiting
         self.llm = LLM(
             api_key=os.getenv("GEMINI_API_KEY"),
-            model="gemini/gemini-1.5-flash",
+            model= LLM_MODEL,
             temperature=0.7,
             max_tokens=2048,
             top_p=0.9,
@@ -77,41 +77,6 @@ class BlogGeneratorCrew():
         self.research_mode_tool = ResearchModeTool()
         self.competitor_analysis_tool = CompetitorAnalysisTool()
     
-    def _save_output_to_json(self, data, filename: str):
-        """Save structured output to JSON file with proper formatting"""
-        try:
-            filepath = self.output_dir / filename
-            
-            # Handle different data types and ensure proper JSON structure
-            if hasattr(data, 'model_dump'):
-                # Pydantic model
-                json_data = data.model_dump()
-            elif hasattr(data, 'dict'):
-                # Pydantic model (older versions)
-                json_data = data.dict()
-            elif isinstance(data, dict):
-                # Regular dict - use as is
-                json_data = data
-            elif isinstance(data, str):
-                # If it's a JSON string, parse it first
-                try:
-                    json_data = json.loads(data)
-                except json.JSONDecodeError:
-                    # If parsing fails, wrap in a structure
-                    json_data = {"raw_output": data}
-            else:
-                # Convert to string representation
-                json_data = {"raw_output": str(data)}
-            
-            # Save with proper JSON formatting (indented and readable)
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(json_data, f, indent=2, ensure_ascii=False, sort_keys=False)
-            
-            print(f"Output saved to: {filepath}")
-            return str(filepath)
-        except Exception as e:
-            print(f"Error saving output to JSON: {e}")
-            return None
     
     def _extract_crew_output(self, crew_output):
         """Extract and parse the actual result from CrewAI output structure"""
@@ -461,7 +426,7 @@ class BlogGeneratorCrew():
             config=self.tasks_config['generate_topic_suggestions'],
             agent=self.topic_researcher(),
             output_pydantic=TopicGenerationOutput,
-            output_file='topic_suggestions.json',
+            output_file='Artifacts/topic_suggestions.json',
             verbose=True
         )
     
@@ -472,7 +437,7 @@ class BlogGeneratorCrew():
             config=self.tasks_config['research_topic'],
             agent=self.knowledge_retriever(),
             output_pydantic=ResearchOutput,
-            output_file='research_findings.json',
+            output_file='Artifacts/research_findings.json',
             verbose=True
         )
     
@@ -483,7 +448,7 @@ class BlogGeneratorCrew():
             config=self.tasks_config['analyze_competitors'],
             agent=self.competitor_analyst(),
             output_pydantic=CompetitorAnalysisOutput,
-            output_file='competitor_analysis.json',
+            output_file='Artifacts/competitor_analysis.json',
             verbose=True
         )
     
@@ -495,7 +460,7 @@ class BlogGeneratorCrew():
             agent=self.seo_strategist(),
             context=[self.research_topic(), self.analyze_competitors()],
             output_pydantic=KeywordStrategyOutput,
-            output_file='keyword_strategy.json',
+            output_file='Artifacts/keyword_strategy.json',
             verbose=True
         )
     
@@ -507,7 +472,7 @@ class BlogGeneratorCrew():
             agent=self.content_structurer(),
             context=[self.develop_keyword_strategy()],
             output_pydantic=TitleGenerationOutput,
-            output_file='title_options.json',
+            output_file='Artifacts/title_options.json',
             verbose=True
         )
     
@@ -519,7 +484,7 @@ class BlogGeneratorCrew():
             agent=self.content_structurer(),
             context=[self.research_topic(), self.develop_keyword_strategy()],
             output_pydantic=ContentStructureOutput,
-            output_file='content_structure.json',
+            output_file='Artifacts/content_structure.json',
             verbose=True
         )
     
@@ -706,9 +671,7 @@ class BlogGeneratorCrew():
             # Extract the actual result from crew output
             extracted_result = self._extract_crew_output(crew_output)
             
-            # Save to JSON with proper formatting
-            self._save_output_to_json(extracted_result, 'topic_suggestions.json')
-            
+       
             # Return the extracted result directly
             return extracted_result
             
@@ -721,13 +684,20 @@ class BlogGeneratorCrew():
         try:
             print(f"Starting research with inputs: {inputs}")
             
+            # Handle file uploads for RAG mode BEFORE running research
+            print(f"DEBUG: Research inputs - mode: {inputs.get('mode')}, uploads: {inputs.get('uploads')}")
+            if inputs.get('mode', '').upper() == 'RAG' and inputs.get('uploads'):
+                print(f"Processing {len(inputs['uploads'])} uploaded files for RAG mode")
+                self._process_uploads_for_rag(inputs['uploads'])
+            else:
+                print(f"DEBUG: Not processing uploads - mode: {inputs.get('mode')}, uploads: {inputs.get('uploads')}")
+            
             crew_output = self.research_crew().kickoff(inputs=inputs)
             
             # Extract the actual result from crew output
             extracted_result = self._extract_crew_output(crew_output)
             
-            # Save to JSON with proper formatting
-            self._save_output_to_json(extracted_result, 'research_findings.json')
+           
             
             # Return the extracted result directly
             return extracted_result
@@ -746,9 +716,7 @@ class BlogGeneratorCrew():
             # Extract the actual result from crew output
             extracted_result = self._extract_crew_output(crew_output)
             
-            # Save to JSON with proper formatting
-            self._save_output_to_json(extracted_result, 'competitor_analysis.json')
-            
+      
             # Return the extracted result directly
             return extracted_result
             
@@ -766,8 +734,6 @@ class BlogGeneratorCrew():
             # Extract the actual result from crew output
             extracted_result = self._extract_crew_output(crew_output)
             
-            # Save to JSON with proper formatting
-            self._save_output_to_json(extracted_result, 'keyword_strategy.json')
             
             # Return the extracted result directly
             return extracted_result
@@ -786,9 +752,7 @@ class BlogGeneratorCrew():
             # Extract the actual result from crew output
             extracted_result = self._extract_crew_output(crew_output)
             
-            # Save to JSON with proper formatting
-            self._save_output_to_json(extracted_result, 'title_options.json')
-            
+                
             # Return the extracted result directly
             return extracted_result
             
@@ -806,9 +770,7 @@ class BlogGeneratorCrew():
             # Extract the actual result from crew output
             extracted_result = self._extract_crew_output(crew_output)
             
-            # Save to JSON with proper formatting
-            self._save_output_to_json(extracted_result, 'content_structure.json')
-            
+               
             # Return the extracted result directly
             return extracted_result
             
@@ -826,9 +788,7 @@ class BlogGeneratorCrew():
             # Extract the actual result from crew output
             extracted_result = self._extract_crew_output(crew_output)
             
-            # Save to JSON with proper formatting
-            self._save_output_to_json(extracted_result, 'generated_blog.json')
-            
+           
             # Return the extracted result directly
             return extracted_result
             
@@ -855,6 +815,14 @@ class BlogGeneratorCrew():
         })
         
         print(f"Starting workflow with research method: {inputs['research_method']}")
+        
+        # Handle file uploads for RAG mode BEFORE running workflow
+        print(f"DEBUG: Workflow inputs - research_method: {inputs.get('research_method')}, uploads: {inputs.get('uploads')}")
+        if inputs.get('research_method', '').upper() == 'RAG' and inputs.get('uploads'):
+            print(f"Processing {len(inputs['uploads'])} uploaded files for RAG mode in workflow")
+            self._process_uploads_for_rag(inputs['uploads'])
+        else:
+            print(f"DEBUG: Not processing uploads in workflow - research_method: {inputs.get('research_method')}, uploads: {inputs.get('uploads')}")
         
         workflow_steps = []
         
@@ -891,9 +859,7 @@ class BlogGeneratorCrew():
                 }
             }
             
-            # Save complete workflow output
-            self._save_output_to_json(workflow_output, 'complete_workflow.json')
-            
+              
             return workflow_output
             
         except Exception as e:
@@ -911,9 +877,7 @@ class BlogGeneratorCrew():
                 "success_metrics": {"workflow_completed": False, "error": str(e)}
             }
             
-            # Save failed workflow output
-            self._save_output_to_json(workflow_output, 'failed_workflow.json')
-            
+             
             raise
     
     def add_knowledge_documents(self, pdf_paths=None, markdown_paths=None, urls=None):
@@ -930,6 +894,82 @@ class BlogGeneratorCrew():
             results['url_results'] = self.enhanced_rag_tool.add_url_documents(urls)
         
         return results
+    
+    def _process_uploads_for_rag(self, uploads: list):
+        """Process uploaded files and add them to the knowledge base"""
+        try:
+            print(f"DEBUG: Processing uploads for RAG: {uploads}")
+            print(f"DEBUG: Uploads type: {type(uploads)}")
+            print(f"DEBUG: Uploads length: {len(uploads) if uploads else 0}")
+            
+            processed_count = 0
+            for i, upload in enumerate(uploads):
+                print(f"DEBUG: Processing upload {i}: {upload} (type: {type(upload)})")
+                
+                if isinstance(upload, str):
+                    # Handle file paths from FastAPI uploads
+                    print(f"DEBUG: Upload is string, checking if file exists: {upload}")
+                    if os.path.exists(upload):
+                        file_ext = os.path.splitext(upload)[1].lower()
+                        print(f"DEBUG: File exists, extension: {file_ext}")
+                        
+                        if file_ext == '.pdf':
+                            print(f"DEBUG: Processing PDF file: {upload}")
+                            result = self.enhanced_rag_tool.add_pdf_documents([upload])
+                            print(f"DEBUG: PDF processing result: {result}")
+                            if result.get('added', 0) > 0:
+                                processed_count += 1
+                        elif file_ext in ['.md', '.txt']:
+                            print(f"DEBUG: Processing markdown/text file: {upload}")
+                            result = self.enhanced_rag_tool.add_markdown_documents([upload])
+                            print(f"DEBUG: Markdown processing result: {result}")
+                            if result.get('added', 0) > 0:
+                                processed_count += 1
+                        elif file_ext == '.docx':
+                            print(f"DEBUG: Processing DOCX file: {upload}")
+                            # Handle docx files (you might need to install python-docx)
+                            try:
+                                import docx
+                                doc = docx.Document(upload)
+                                text_content = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+                                
+                                # Save as temporary markdown file
+                                temp_md = upload.replace('.docx', '_temp.md')
+                                with open(temp_md, 'w', encoding='utf-8') as f:
+                                    f.write(text_content)
+                                
+                                result = self.enhanced_rag_tool.add_markdown_documents([temp_md])
+                                if result.get('added', 0) > 0:
+                                    processed_count += 1
+                                
+                                # Clean up temp file
+                                if os.path.exists(temp_md):
+                                    os.remove(temp_md)
+                            except ImportError:
+                                print("python-docx not installed, skipping .docx file")
+                        
+                        print(f"Processed upload: {upload}")
+                    else:
+                        print(f"DEBUG: Upload file not found: {upload}")
+                        print(f"DEBUG: Current working directory: {os.getcwd()}")
+                        print(f"DEBUG: File absolute path: {os.path.abspath(upload)}")
+                else:
+                    print(f"DEBUG: Invalid upload format: {type(upload)}")
+            
+            print(f"Successfully processed {processed_count}/{len(uploads)} uploads for RAG knowledge base")
+            
+            # Rebuild the index after adding documents
+            if processed_count > 0:
+                self.enhanced_rag_tool._rebuild_index()
+                print("Knowledge base index rebuilt successfully")
+            else:
+                print("DEBUG: No uploads were processed successfully")
+            
+        except Exception as e:
+            print(f"Error processing uploads for RAG: {e}")
+            import traceback
+            traceback.print_exc()
+            # Don't raise here, continue with research
     
     def run_research_mode(self, mode: str, topic: str, **kwargs):
         """Run specific research modes independently"""
