@@ -28,6 +28,7 @@ class KeywordRequest(BaseModel):
     primary_keyword: Optional[str] = Field(None, description="Optional primary keyword")
     research_method: str = Field(default="SERP", description="Research method to use")
     pillar: Optional[str] = Field(None, description="Content pillar")
+    competitor_urls: Optional[List[str]] = Field(default=None, description="Optional competitor URLs to inform keyword strategy")
 
 
 class TitleRequest(BaseModel):
@@ -35,22 +36,20 @@ class TitleRequest(BaseModel):
     primary: str = Field(..., description="Primary keyword")
     secondary: List[str] = Field(..., description="Secondary keywords")
     research_method: str = Field("SERP", description="Research method to use")
+    competitor_urls: Optional[List[str]] = Field(default=None, description="Optional competitor URLs to pass to dependency tasks")
 
 
 class StructureRequest(BaseModel):
+    type: str = Field(..., description="Structure Type")
+
+
+class OutlineRequest(BaseModel):
     topic: str = Field(..., description="Topic for structure")
     structure_type: str = Field(..., description="Structure type")
     keywords: Dict[str, Any] = Field(..., description="Keyword strategy")
     primary_keyword: str = Field(..., description="Primary keyword for the content")
     research_method: str = Field("SERP", description="Research method to use")
-
-
-class OutlineRequest(BaseModel):
-    topic: str = Field(..., description="Topic for outline")
-    structure: str = Field(..., description="Content structure type")
-    keywords: Dict[str, Any] = Field(..., description="Keyword strategy")
-    research_method: str = Field("SERP", description="Research method to use")
-
+    competitor_urls: Optional[List[str]] = Field(default=None, description="Optional competitor URLs to pass to dependency tasks")
 
 class BlogGenerationRequest(BaseModel):
     topic: str = Field(..., description="Blog topic")
@@ -59,6 +58,7 @@ class BlogGenerationRequest(BaseModel):
     keywords: Dict[str, Any] = Field(..., description="Keywords")
     brand_voice: str = Field(default="professional, helpful, concise", description="Brand voice guidelines")
     research_method: str = Field("SERP", description="Research method to use")
+    competitor_urls: Optional[List[str]] = Field(default=None, description="Optional competitor URLs to pass to dependency tasks")
 
 
 class WorkflowRequest(BaseModel):
@@ -69,11 +69,11 @@ class WorkflowRequest(BaseModel):
     uploads: Optional[List[str]] = None
     structure: str = Field(default="How-to Guide", description="Blog structure type")
     brand_voice: str = Field(default="professional, helpful, concise", description="Brand voice")
+    competitor_urls: Optional[List[str]] = Field(default=None, description="Optional competitor URLs to pass to competitor analysis task")
 
 
 class SessionResponse(BaseModel):
     session_id: str
     status: str
     message: str
-
 

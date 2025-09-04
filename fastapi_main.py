@@ -10,7 +10,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 import logging
-from src.blog_generator_ai_agent.utils.constants import API_HOST,API_PORT
+from src.blog_generator_ai_agent.utils.constants import API_HOST,API_PORT, LAYOUT_TEMPLATES
 from src.blog_generator_ai_agent.crew import BlogGeneratorCrew
 
 from src.blog_generator_ai_agent.api.models import (
@@ -29,8 +29,9 @@ from src.blog_generator_ai_agent.api.exceptions import create_error_response, gl
 from src.blog_generator_ai_agent.utils.utils import create_session, get_session, update_session, results_storage
 
 from dotenv import load_dotenv
-from src.blog_generator_ai_agent.logger import get_logger, LOGS_DIR
+from src.blog_generator_ai_agent.logger import get_logger, LOGS_DIR 
 from src.blog_generator_ai_agent.utils.setup_telemetry import setup_telemetry, instrument_fastapi_app, log_with_custom_dimensions
+
 
 load_dotenv()
 
@@ -310,7 +311,8 @@ async def generate_keywords(request: KeywordRequest):
             "research_findings": request.findings or "",
             "primary_keyword": primary_keyword,
             "pillar": request.pillar or request.topic,
-            "research_method": request.research_method
+            "research_method": request.research_method,
+            "competitor_urls": request.competitor_urls
         }
         
         logger.info(f"/seo/keywords started | session_id={session_id} | topic={request.topic}")
@@ -367,7 +369,8 @@ async def generate_titles(request: TitleRequest):
             "primary_keyword": request.primary,
             "secondary_keywords": request.secondary,
             "pillar": request.topic,
-            "research_method": request.research_method
+            "research_method": request.research_method,
+            "competitor_urls": request.competitor_urls
         }
         
         logger.info(f"/titles/generate started | session_id={session_id} | topic={request.topic}")
@@ -409,8 +412,17 @@ async def generate_titles(request: TitleRequest):
             **fallback_data
         }
 
-@app.post("/structure/create")
-async def create_structure(request: StructureRequest):
+
+@app.post("/structure/select")
+async def select_structure(request: StructureRequest):
+    structure_type = request.type
+    if structure_type not in LAYOUT_TEMPLATES:
+        raise HTTPException(status_code=400, detail="Invalid structure type")
+    return {"type": structure_type, "layout": LAYOUT_TEMPLATES[structure_type]}
+
+
+@app.post("/outline/create")
+async def create_structure(request: OutlineRequest):
     """Create content structure with structured output"""
     try:
         session_id = create_session()
@@ -421,10 +433,11 @@ async def create_structure(request: StructureRequest):
             "keywords": request.keywords,
             "primary_keyword": request.primary_keyword,
             "pillar": request.topic,
-            "research_method": request.research_method
+            "research_method": request.research_method,
+            "competitor_urls": request.competitor_urls
         }
         
-        logger.info(f"/structure/create started | session_id={session_id} | topic={request.topic} | type={request.structure_type}")
+        logger.info(f"/outline/create started | session_id={session_id} | topic={request.topic} | type={request.structure_type}")
         
         # Get direct output from crew (now returns clean extracted result)
         result_data = blog_crew.run_content_structure(inputs)
@@ -432,7 +445,7 @@ async def create_structure(request: StructureRequest):
         update_session(session_id, "content_structure", result_data)
         
         sections_count = len(result_data.get("sections", []))
-        logger.info(f"/structure/create completed | session_id={session_id} | sections_count={sections_count}")
+        logger.info(f"/outline/create completed | session_id={session_id} | sections_count={sections_count}")
         
         # Return the actual data directly in the response
         return {
@@ -477,7 +490,8 @@ async def generate_blog(request: BlogGenerationRequest):
             "keywords": request.keywords,
             "brand_voice": request.brand_voice,
             "pillar": request.topic,
-            "research_method": request.research_method
+            "research_method": request.research_method,
+            "competitor_urls": request.competitor_urls
         }
         
         logger.info(f"/blog/generate started | session_id={session_id} | topic={request.topic} | structure={request.structure_type}")
@@ -550,7 +564,8 @@ async def run_complete_workflow(request: WorkflowRequest):
             "pillar": request.pillar,
             "research_method": request.mode,
             "structure_type": request.structure,
-            "brand_voice": request.brand_voice
+            "brand_voice": request.brand_voice,
+            "competitor_urls": request.competitor_urls
         }
         
         if request.urls:

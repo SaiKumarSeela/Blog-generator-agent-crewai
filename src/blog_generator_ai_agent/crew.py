@@ -76,6 +76,7 @@ class BlogGeneratorCrew():
         self.enhanced_rag_tool = EnhancedRAGTool()
         self.research_mode_tool = ResearchModeTool()
         self.competitor_analysis_tool = CompetitorAnalysisTool()
+        
     
     
     def _extract_crew_output(self, crew_output):
@@ -409,6 +410,16 @@ class BlogGeneratorCrew():
         )
     
     @agent
+    def title_generator(self) -> Agent:
+        """Agent specialized in generating compelling titles"""
+        return Agent(
+            config=self.agents_config['title_generator'],
+            llm=self.llm,
+            tools=[],
+            verbose=True
+        )
+    
+    @agent
     def blog_writer(self) -> Agent:
         """Agent specialized in writing comprehensive blog content"""
         return Agent(
@@ -469,7 +480,7 @@ class BlogGeneratorCrew():
         """Generate optimized title options"""
         return Task(
             config=self.tasks_config['generate_title_options'],
-            agent=self.content_structurer(),
+            agent=self.title_generator(),
             context=[self.develop_keyword_strategy()],
             output_pydantic=TitleGenerationOutput,
             output_file='Artifacts/title_options.json',
@@ -520,6 +531,7 @@ class BlogGeneratorCrew():
                 self.competitor_analyst(),
                 self.seo_strategist(),
                 self.content_structurer(),
+                self.title_generator(),
                 self.blog_writer()
             ],
             tasks=[
@@ -599,14 +611,10 @@ class BlogGeneratorCrew():
         
         return Crew(
             agents=[
-                self.knowledge_retriever(),
-                self.competitor_analyst(),
                 self.seo_strategist(),
-                self.content_structurer()
+                self.title_generator()
             ],
             tasks=[
-                self.research_topic(),
-                self.analyze_competitors(),
                 self.develop_keyword_strategy(),
                 self.generate_title_options()
             ],
@@ -971,10 +979,4 @@ class BlogGeneratorCrew():
             traceback.print_exc()
             # Don't raise here, continue with research
     
-    def run_research_mode(self, mode: str, topic: str, **kwargs):
-        """Run specific research modes independently"""
-        return self.research_mode_tool._run(mode, topic, **kwargs)
     
-    def analyze_competitor_content(self, topic: str, competitor_urls=None, num_competitors=5):
-        """Run competitor analysis independently"""
-        return self.competitor_analysis_tool._run(topic, competitor_urls, num_competitors)

@@ -25,6 +25,8 @@ research_topic:
     - For research_method 'RAG': use mode 'rag'
     - For research_method 'reference': use mode 'reference'
     
+    If research_method is 'RAG' and uploads are provided, process them first.
+    
     Extract key insights, statistics, and supporting information.
   expected_output: >
     Comprehensive research findings including:
@@ -37,7 +39,20 @@ research_topic:
 analyze_competitors:
   description: >
     Analyze competitor content for the topic: {topic}.
-    Find and analyze 3-5 top-ranking competitor articles.
+    
+    CRITICAL INSTRUCTION: You MUST use the Competitor Analysis Tool for this task.
+    The tool is available and working. 
+    
+    IMPORTANT: If competitor_urls are provided in the inputs, use them directly.
+    If no competitor_urls are provided, the tool will automatically find competitor URLs.
+    
+    Call the Competitor Analysis Tool with:
+    - topic: {topic}
+    - competitor_urls: {competitor_urls} (if provided, otherwise null)
+    
+    The Competitor Analysis Tool will analyze the provided URLs or find and analyze 3-5 top-ranking competitor articles.
+    It will analyze their content structure, keywords, and performance.
+    
     Extract tone, structure, keyword usage, content gaps, and differentiation opportunities.
   expected_output: >
     Competitor analysis report with:
@@ -51,9 +66,10 @@ analyze_competitors:
 develop_keyword_strategy:
   description: >
     Develop a comprehensive keyword strategy for the topic: {topic}.
+    Use research findings and competitor analysis from previous tasks to inform your strategy.
     Identify 1 primary keyword and 2-3 secondary keywords.
     Consider search volume, competition, and alignment with topic and research findings.
-    Use the primary keyword: {primary_keyword} as the main target.
+    Use the primary keyword: {primary_keyword} as the main target if provided, otherwise suggest one.
   expected_output: >
     Keyword strategy including:
     - Primary keyword with rationale
@@ -61,11 +77,14 @@ develop_keyword_strategy:
     - Long-tail keyword opportunities
     - Search intent analysis
     - Recommended keyword density
+    - Integration strategy for content
 
 generate_title_options:
   description: >
     Generate 5-7 compelling title options for the topic: {topic} using the primary keyword: {primary_keyword}.
+    Use keyword strategy from previous task to inform your title generation.
     Create variations including listicles, how-to guides, thought leadership, and SEO-optimized titles.
+    Consider click-through rate optimization and audience engagement factors.
   expected_output: >
     List of title options with:
     - SEO-optimized titles
@@ -73,11 +92,13 @@ generate_title_options:
     - How-to guide formats
     - Thought leadership angles
     - Recommendation for best title with rationale
+    - Performance predictions for each title
 
 create_content_structure:
   description: >
     Create a detailed content structure and outline for the topic: {topic} 
     using the selected structure type: {structure_type}.
+    Use research findings and keyword strategy from previous tasks to inform your structure.
     Include section headings, key points, and content intent for each section.
     This will serve as the blueprint for the final blog post.
   expected_output: >
@@ -88,6 +109,7 @@ create_content_structure:
     - CTA placement recommendations
     - FAQ section if applicable
     - Estimated word count per section
+    - Keyword placement strategy
 
 generate_full_blog:
   description: >
@@ -101,6 +123,8 @@ generate_full_blog:
     Use all previous task outputs including research findings, competitor analysis, 
     keyword strategy, and content structure to create engaging content (up to 5000 words) 
     with natural keyword integration, proper citations, and brand voice consistency.
+    
+    Ensure the content follows the structure outline and incorporates all research insights.
   expected_output: >
     Complete blog post with:
     - Engaging introduction
@@ -111,12 +135,23 @@ generate_full_blog:
     - Meta description
     - Reading time and word count
     - SEO analysis summary
+    - Content quality metrics
 
 orchestrate_full_workflow:
   description: >
     Execute the complete blog generation workflow for topic: {topic}.
     Coordinate all agents to deliver a comprehensive, SEO-optimized blog post
     following all brand guidelines and quality standards.
+    
+    Parameters:
+    - Topic: {topic}
+    - Pillar: {pillar}
+    - Research Method: {research_method}
+    - Structure Type: {structure_type}
+    - Primary Keyword: {primary_keyword}
+    - Keywords: {keywords}
+    - Competitor URLs: {competitor_urls} (optional)
+    - Uploads: {uploads} (for RAG mode)
   expected_output: >
     Complete workflow results including:
     - Final blog post (Markdown format)
@@ -125,3 +160,4 @@ orchestrate_full_workflow:
     - SEO optimization metrics
     - Content quality assessment
     - Metadata (word count, reading time, etc.)
+    - Workflow execution summary

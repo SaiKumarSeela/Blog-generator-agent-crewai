@@ -122,7 +122,7 @@ class Config:
         "competitors_analyse": "/competitors/analyse",
         "seo_keywords": "/seo/keywords",
         "titles_generate": "/titles/generate",
-        "structure_create": "/structure/create",
+        "structure_create": "/outline/create",
         "blog_generate": "/blog/generate",
         "workflow_run": "/workflow/run",
         "upload": "/upload",
@@ -578,6 +578,7 @@ def render_topic_generation_page():
                         if st.button("Continue to Research →", use_container_width=True):
                             st.session_state.current_step = 'research'
                             logger.info("Navigating to Research step")
+                            render_research_page()
                             st.rerun()
             
             render_json_viewer(response, "Topic Generation Response")
@@ -717,6 +718,7 @@ def render_research_page():
             if st.button("Continue to Competitor Analysis →", use_container_width=True):
                 st.session_state.current_step = 'competitors'
                 logger.info("Navigating to Competitors step")
+                render_competitor_analysis_page()
                 st.rerun()
             
             render_json_viewer(response, "Research Response")
@@ -815,6 +817,7 @@ def render_competitor_analysis_page():
             if st.button("Continue to Keywords →", use_container_width=True):
                 st.session_state.current_step = 'keywords'
                 logger.info("Navigating to Keywords step")
+                render_keywords_page()
                 st.rerun()
             
             render_json_viewer(response, "Competitor Analysis Response")
@@ -873,6 +876,11 @@ def render_keywords_page():
             placeholder="Enter research findings or leave empty",
             help="Research findings to inform keyword strategy"
         )
+        competitor_urls_input = st.text_area(
+            "Competitor URLs (optional)",
+            placeholder="https://competitor1.com/post\nhttps://competitor2.com/article",
+            help="Provide competitor URLs to inform dependency tasks (one per line)"
+        )
         
         submitted = st.form_submit_button("Generate Keywords", use_container_width=True)
     
@@ -883,7 +891,8 @@ def render_keywords_page():
                 "findings": findings,
                 "primary_keyword": primary_keyword,
                 "pillar": pillar,
-                "research_method": "SERP"
+                "research_method": "SERP",
+                "competitor_urls": [u.strip() for u in competitor_urls_input.split('\n') if u.strip()] if competitor_urls_input else None
             }
             
             logger.info("Submitting Keyword Strategy request")
@@ -926,12 +935,13 @@ def render_keywords_page():
                 
                 with col3:
                     st.markdown("**Long-tail Keywords**")
-                    long_tail = strategy.get("long_tail_keywords", [])
+                    long_tail = strategy.get("long_tail_opportunities", [])
                     for kw in long_tail[:3]:  # Show first 3
                         st.write(f"• {kw}")
             
             if st.button("Continue to Titles →", use_container_width=True):
                 st.session_state.current_step = 'titles'
+                render_titles_page()
                 logger.info("Navigating to Titles step")
                 st.rerun()
             
@@ -985,8 +995,13 @@ def render_titles_page():
                 placeholder="Enter secondary keywords (one per line)",
                 help="One keyword per line"
             )
-        
+        competitor_urls_input = st.text_area(
+            "Competitor URLs (optional)",
+            placeholder="https://competitor1.com/post\nhttps://competitor2.com/article",
+            help="Provide competitor URLs to pass to dependency tasks (one per line)"
+        )
         submitted = st.form_submit_button("Generate Titles", use_container_width=True)
+        
     
     if submitted and topic and primary:
         secondary_list = [kw.strip() for kw in secondary_input.split('\n') if kw.strip()]
@@ -996,7 +1011,8 @@ def render_titles_page():
                 "topic": topic,
                 "primary": primary,
                 "secondary": secondary_list,
-                "research_method": "SERP"
+                "research_method": "SERP",
+                "competitor_urls": [u.strip() for u in competitor_urls_input.split('\n') if u.strip()] if competitor_urls_input else None
             }
             
             logger.info("Submitting Title Generation request")
@@ -1040,6 +1056,7 @@ def render_titles_page():
                     
                     if st.button("Continue to Structure →", use_container_width=True):
                         st.session_state.current_step = 'structure'
+                        render_structure_page()
                         logger.info("Navigating to Structure step")
                         st.rerun()
             
@@ -1092,8 +1109,14 @@ def render_structure_page():
                 placeholder="Enter primary keyword",
                 help="Primary keyword for the structure"
             )
-        
+        competitor_urls_input = st.text_area(
+            "Competitor URLs (optional)",
+            placeholder="https://competitor1.com/post\nhttps://competitor2.com/article",
+            help="Provide competitor URLs to pass to dependency tasks (one per line)"
+        )
+
         submitted = st.form_submit_button("Create Structure", use_container_width=True)
+        
     
     if submitted and topic and structure_type:
         with st.spinner("🔄 Creating content structure..."):
@@ -1102,7 +1125,8 @@ def render_structure_page():
                 "structure_type": structure_type,
                 "keywords": previous_keywords,
                 "primary_keyword": primary_keyword,
-                "research_method": "SERP"
+                "research_method": "SERP",
+                "competitor_urls": [u.strip() for u in competitor_urls_input.split('\n') if u.strip()] if competitor_urls_input else None
             }
             
             logger.info("Submitting Structure Creation request")
@@ -1131,14 +1155,17 @@ def render_structure_page():
                 st.subheader("📋 Content Structure")
                 
                 for i, section in enumerate(sections):
-                    with st.expander(f"Section {i+1}: {section.get('heading', 'N/A')}"):
-                        st.write(f"**Type:** {section.get('type', 'N/A')}")
-                        st.write(f"**Content:** {section.get('description', 'N/A')}")
-                        if section.get('word_count'):
-                            st.write(f"**Target Words:** {section.get('word_count', 'N/A')}")
-            
+                    with st.expander(f"Section {i+1}: {section.get('heading_text', 'N/A')}"):
+                        st.write(f"**Heading Level:** {section.get('heading_level', 'N/A')}")
+                        st.write(f"**Content Intent:** {section.get('content_intent', 'N/A')}")
+                        keypoints = section.get("key_points",[])
+
+                        for i, keypoint in enumerate(keypoints):
+                            st.write(f"Keypoints {i + 1}: {keypoint}")
+                        
             if st.button("Continue to Blog Generation →", use_container_width=True):
                 st.session_state.current_step = 'blog'
+                render_blog_generation_page()
                 logger.info("Navigating to Blog step")
                 st.rerun()
             
@@ -1202,8 +1229,14 @@ def render_blog_generation_page():
                 value="professional, helpful, concise",
                 help="Brand voice guidelines"
             )
+        competitor_urls_input = st.text_area(
+            "Competitor URLs (optional)",
+            placeholder="https://competitor1.com/post\nhttps://competitor2.com/article",
+            help="Provide competitor URLs to pass to dependency tasks (one per line)"
+        )
         
         submitted = st.form_submit_button("Generate Blog Post", use_container_width=True)
+        
     
     if submitted and topic:
         with st.spinner("🔄 Generating blog post... This may take a few minutes."):
@@ -1213,7 +1246,8 @@ def render_blog_generation_page():
                 "primary_keyword": primary_keyword,
                 "keywords": previous_keywords,
                 "brand_voice": brand_voice,
-                "research_method": "SERP"
+                "research_method": "SERP",
+                "competitor_urls": [u.strip() for u in competitor_urls_input.split('\n') if u.strip()] if competitor_urls_input else None
             }
             
             logger.info("Submitting Blog Generation request")
@@ -1356,6 +1390,11 @@ def render_complete_workflow_page():
             placeholder="https://example.com/article1\nhttps://example.com/article2",
             help="Additional URLs for research (one per line)"
         )
+        competitor_urls_input = st.text_area(
+            "Competitor URLs (optional)",
+            placeholder="https://competitor1.com/post\nhttps://competitor2.com/article",
+            help="Provide competitor URLs for competitor analysis (one per line)"
+        )
         
         uploaded_files = st.file_uploader(
             "Upload Reference Files",
@@ -1371,6 +1410,9 @@ def render_complete_workflow_page():
         urls = []
         if urls_input.strip():
             urls = [url.strip() for url in urls_input.split('\n') if url.strip()]
+        competitor_urls = None
+        if competitor_urls_input and competitor_urls_input.strip():
+            competitor_urls = [u.strip() for u in competitor_urls_input.split('\n') if u.strip()]
         
         # Handle file uploads
         uploads = []
@@ -1406,6 +1448,8 @@ def render_complete_workflow_page():
                 request_data["urls"] = urls
             if uploads:
                 request_data["uploads"] = uploads
+            if competitor_urls:
+                request_data["competitor_urls"] = competitor_urls
             
             status_text.text("Executing workflow steps...")
             progress_bar.progress(0.5)

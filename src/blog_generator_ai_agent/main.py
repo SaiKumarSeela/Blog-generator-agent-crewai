@@ -142,12 +142,18 @@ def run_research_mode_demo():
     # Demo Competitor Analysis
     print("\n3. 🏆 Competitor Analysis:")
     try:
-        comp_results = blog_crew.analyze_competitor_content(topic, num_competitors=3)
-        comp_data = json.loads(comp_results)
-        print(f"   Analyzed {comp_data.get('total_analyzed', 0)} competitor articles")
-        if comp_data.get('competitors'):
-            avg_words = comp_data.get('comparison_grid', {}).get('average_metrics', {}).get('word_count', 'N/A')
+        comp_inputs = {
+            "topic": topic,
+            "pillar": "Content Marketing",
+            "competitor_urls": [],  # Will use competitor tool to find URLs
+            "num_competitors": 3
+        }
+        comp_results = blog_crew.run_competitor_analysis(comp_inputs)
+        print(f"   Analyzed {len(comp_results.get('competitor_summaries', []))} competitor articles")
+        if comp_results.get('competitor_summaries'):
+            avg_words = comp_results.get('comparison_grid', {}).get('average_metrics', {}).get('word_count', 'N/A')
             print(f"   Average competitor word count: {avg_words}")
+        print(f"   ✅ Competitor analysis completed")
     except Exception as e:
         print(f"   Error: {e}")
 
