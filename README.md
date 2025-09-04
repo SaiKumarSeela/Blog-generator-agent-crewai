@@ -1,54 +1,135 @@
-# BlogGeneratorAiAgent Crew
+# Blog Generator AI Agent
 
-Welcome to the BlogGeneratorAiAgent Crew project, powered by [crewAI](https://crewai.com). This template is designed to help you set up a multi-agent AI system with ease, leveraging the powerful and flexible framework provided by crewAI. Our goal is to enable your agents to collaborate effectively on complex tasks, maximizing their collective intelligence and capabilities.
+Agentic RAG-enabled system for research, SEO planning, content structuring, and blog generation using crewAI, FastAPI, and Google Gemini.
 
-## Installation
+### Features
+- **API-first** FastAPI service with structured outputs for every step (topics, research, competitors, keywords, structure, blog, workflow)
+- **CLI** runners for demos and interactive generation
+- **Observability** via Azure Application Insights (OpenTelemetry)
 
-Ensure you have Python >=3.10 <3.14 installed on your system. This project uses [UV](https://docs.astral.sh/uv/) for dependency management and package handling, offering a seamless setup and execution experience.
+### Requirements
+- Python >=3.10,<3.14
+- Google Gemini API access
+- SERP API key (for web search) optional but recommended
 
-First, if you haven't already, install uv:
+### Environment variables
+Create a `.env` file in the project root with:
 
+```bash
+GEMINI_API_KEY=your_gemini_key
+SERP_API_KEY=your_serp_key
+FIRECRAWL_API_KEY=optional_firecrawl_key
+APPLICATIONINSIGHTS_CONNECTION_STRING=your_azure_appinsights_connection_string
+```
+
+Note: The FastAPI app requires `APPLICATIONINSIGHTS_CONNECTION_STRING`. If absent, it will raise an error at startup. If you don't have that key, you can feel free to comment the telemetry code in `fastapi_main.py` file.
+
+### Install and run locally
+You can use either `uv` or plain `pip`. You can check this [documentation](https://docs.crewai.com/en/installation) as well.
+
+- Using uv (recommended):
 ```bash
 pip install uv
+uv pip install -e . # or
+pip install -r requirements.txt
+
 ```
 
-Next, navigate to your project directory and install the dependencies:
-
-(Optional) Lock the dependencies and install them by using the CLI command:
+- Using pip:
 ```bash
-crewai install
+pip install -e .
 ```
-### Customizing
+- install Crewai
+```bash
+uv tool install crewai
+```
 
-**Add your `OPENAI_API_KEY` into the `.env` file**
-
-- Modify `src/blog_generator_ai_agent/config/agents.yaml` to define your agents
-- Modify `src/blog_generator_ai_agent/config/tasks.yaml` to define your tasks
-- Modify `src/blog_generator_ai_agent/crew.py` to add your own logic, tools and specific args
-- Modify `src/blog_generator_ai_agent/main.py` to add custom inputs for your agents and tasks
-
-## Running the Project
-
-To kickstart your crew of AI agents and begin task execution, run this from the root folder of your project:
+### CLI usage (optional)
+Entry points are defined in `pyproject.toml` and `src/blog_generator_ai_agent/main.py`:
 
 ```bash
-$ crewai run
+# Run default demo inputs
+python -m src.blog_generator_ai_agent.main
+
+# Interactive mode
+python -m src.blog_generator_ai_agent.main --interactive
+
+# Research demo
+python -m src.blog_generator_ai_agent.main --research-demo
+
+# Custom topic
+python -m src.blog_generator_ai_agent.main "Your Topic Here"
+```
+or you can also directly run crew by following this below commands in the root directory
+
+```bash
+crewai install 
+uv add <package-name> # to install any additional packages
+crewai run 
 ```
 
-This command initializes the Blog-generator-ai-agent Crew, assembling the agents and assigning them tasks as defined in your configuration.
+### Run the FastAPI service
+Default host/port are defined in `src/blog_generator_ai_agent/utils/constants.py` (`0.0.0.0:8085`).
 
-This example, unmodified, will run the create a `report.md` file with the output of a research on LLMs in the root folder.
+```bash
+uvicorn fastapi_main:app --host 0.0.0.0 --port 8085
+```
 
-## Understanding Your Crew
+Health check: `GET /health` → {"status":"healthy"}
 
-The Blog-generator-ai-agent Crew is composed of multiple AI agents, each with unique roles, goals, and tools. These agents collaborate on a series of tasks, defined in `config/tasks.yaml`, leveraging their collective skills to achieve complex objectives. The `config/agents.yaml` file outlines the capabilities and configurations of each agent in your crew.
+Key endpoints (JSON request bodies are defined in `src/blog_generator_ai_agent/api/models.py`):
+- `POST /topic/generate`
+- `POST /research/run`
+- `POST /competitors/analyse`
+- `POST /seo/keywords`
+- `POST /titles/generate`
+- `POST /structure/select`
+- `POST /outline/create`
+- `POST /blog/generate`
+- `POST /workflow/run`
 
-## Support
 
-For support, questions, or feedback regarding the BlogGeneratorAiAgent Crew or crewAI.
-- Visit our [documentation](https://docs.crewai.com)
-- Reach out to us through our [GitHub repository](https://github.com/joaomdmoura/crewai)
-- [Join our Discord](https://discord.com/invite/X4JWnZnxPb)
-- [Chat with our docs](https://chatg.pt/DWjSBZn)
+### Streamlit app (frontend)
+There is a simple UI in `streamlit_app.py` if you want to experiment:
 
-Let's create wonders together with the power and simplicity of crewAI.
+```bash
+streamlit run streamlit_app.py
+```
+
+### Docker
+The repository includes a production-ready `Dockerfile` that builds a slim Python 3.12 image and serves the FastAPI app with Uvicorn.
+
+Build:
+```bash
+docker build --no-cache -t blog-generator-ai-agent:latest .
+```
+
+Run:
+```bash
+docker run --rm -p 8085:8085 \
+  -e GEMINI_API_KEY=your_gemini_key \
+  -e SERP_API_KEY=your_serp_key \
+  -e FIRECRAWL_API_KEY=your_firecrawl_key \
+  -e APPLICATIONINSIGHTS_CONNECTION_STRING=your_azure_appinsights_connection_string \
+  blog-generator-ai-agent:latest
+```
+
+Health check will hit `http://localhost:8085/health` automatically.
+
+### Architecture
+![architecture](https://github.com/user-attachments/assets/85a90711-8080-4169-b4d5-1f5d8677ffb6)
+
+## Test Cases
+To run the test cases, use the following command
+```bash
+pytest -q
+```
+### Project structure
+- `fastapi_main.py`: FastAPI service entrypoint
+- `src/blog_generator_ai_agent/crew.py`: crewAI orchestration
+- `src/blog_generator_ai_agent/main.py`: CLI flows and demos
+- `src/blog_generator_ai_agent/tools/`: Custom tools
+- `src/blog_generator_ai_agent/api/`: Pydantic models and exception handling
+- `src/blog_generator_ai_agent/utils/`: constants and telemetry setup
+- `Artifacts/`: generated JSON/MD/HTML outputs
+
