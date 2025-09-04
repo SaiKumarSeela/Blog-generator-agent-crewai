@@ -15,7 +15,7 @@ from firecrawl import Firecrawl
 import logging
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-from pydantic import Field
+from pydantic import Field, BaseModel
 from serpapi import GoogleSearch
 from src.blog_generator_ai_agent.utils.constants import EMBEDDING_MODEL_RAG, CHUNK_SIZE, CHUNK_OVERLAP
 import re
@@ -412,6 +412,13 @@ class EnhancedRAGTool(BaseTool):
         
         return tags[:5]
     
+    # Define explicit args schema for tool invocation
+    class EnhancedRAGToolInput(BaseModel):
+        query: str
+        top_k: int = 5
+
+    args_schema = EnhancedRAGToolInput
+
     def _run(self, query: str, top_k: int = 5) -> str:
         """Main RAG retrieval function"""
         result = self.retrieve(query, top_k)
@@ -604,6 +611,16 @@ class ResearchModeTool(BaseTool):
         
         return tags
     
+    # Define explicit args schema for tool invocation
+    class ResearchModeToolInput(BaseModel):
+        mode: str
+        topic: str
+        num_results: int | None = 10
+        top_k: int | None = 10
+        content_list: List[Dict[str, str]] | None = None
+
+    args_schema = ResearchModeToolInput
+
     def _run(self, mode: str, topic: str, **kwargs) -> str:
         """Execute research mode"""
         
@@ -1336,6 +1353,13 @@ class CompetitorAnalysisTool(BaseTool):
         except:
             return "strong overall metrics"
     
+    # Define explicit args schema for tool invocation
+    class CompetitorAnalysisToolInput(BaseModel):
+        topic: str
+        competitor_urls: Optional[List[str]] = None
+
+    args_schema = CompetitorAnalysisToolInput
+
     def _run(self, topic: str, competitor_urls: Optional[List[str]] = None) -> str:
         """Execute competitor analysis with comprehensive error handling"""
         num_competitors = 0
@@ -1432,7 +1456,14 @@ class WebSearchTool(BaseTool):
     name: str = "Web Search Tool"
     description: str = "Search the web using SERP API and return relevant results"
     
-    def _run(self, query: str, num_results: int = 10) -> str:
+    # Define explicit args schema so CrewAI passes concrete values (not schema dict)
+    class WebSearchToolInput(BaseModel):
+        query: str
+        num_results: int = 5
+
+    args_schema = WebSearchToolInput
+    
+    def _run(self, query: str, num_results: int = 5) -> str:
         """Perform web search using SERP API"""
         try:
             serp_api_key = os.getenv("SERP_API_KEY")
