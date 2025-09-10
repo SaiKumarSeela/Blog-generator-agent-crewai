@@ -1,16 +1,21 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
 # Topic Generation Models
 class TopicSuggestion(BaseModel):
-    id: str = Field(description="Unique identifier for the topic")
+    id: Optional[str] = Field(default=None,description="Unique identifier for the topic")
     title: str = Field(description="Topic title")
     description: str = Field(description="Brief description of the topic")
     target_audience: str = Field(description="Target audience for this topic")
     content_pillar_alignment: str = Field(description="How well this aligns with the content pillar")
-    estimated_engagement_potential: str = Field(description="Estimated engagement potential (High/Medium/Low)")
+    estimated_engagement_potential: str = Field(description="Estimated engagement potential (High/Medium only)")
     relevance_score: float = Field(ge=0.0, le=10.0, description="Relevance score out of 10")
+
+class TopicSuggestionsResponse(BaseModel):
+    topics: List[TopicSuggestion] = Field(
+        description="List of generated topic suggestions (exactly 6 items)"
+    )
 
 class TopicGenerationOutput(BaseModel):
     topics: List[TopicSuggestion] = Field(description="List of topic suggestions")
@@ -23,8 +28,8 @@ class ResearchFinding(BaseModel):
     insight: str = Field(description="Key insight or finding")
     source: str = Field(description="Source of the information")
     confidence_score: float = Field(ge=0.0, le=1.0, description="Confidence score for this finding")
-    category: str = Field(description="Category of the finding (statistics, trend, opportunity, etc.)")
-    citation: str = Field(description="Proper citation format")
+    category: Optional[str] = Field(default="", description="Category of the finding (statistics, trend, opportunity, etc.)")
+    citation: Optional[str] = Field(default="", description="Proper citation format")
 
 class ResearchOutput(BaseModel):
     topic: str = Field(description="Researched topic")
@@ -44,7 +49,7 @@ class CompetitorContent(BaseModel):
     summary: str = Field(description="Content summary")
     tone_style: str = Field(description="Tone and style analysis")
     structure_pattern: str = Field(description="Content structure pattern")
-    keyword_strategy: List[str] = Field(description="Keywords identified in content")
+    keyword_strategy: Optional[List[str]] = Field(description="Keywords identified in content")
     strengths: List[str] = Field(description="Content strengths")
     weaknesses: List[str] = Field(description="Content weaknesses")
 
@@ -55,10 +60,22 @@ class CompetitorAnalysisOutput(BaseModel):
     tone_analysis: Dict[str, str] = Field(description="Overall tone and style analysis")
     structure_patterns: List[str] = Field(description="Common structure patterns")
     keyword_strategies: List[str] = Field(description="Competitor keyword strategies")
-    differentiation_opportunities: List[str] = Field(description="Opportunities for differentiation")
+    differentiation_opportunities: List[str] = Field(default= "",description="Opportunities for differentiation")
     what_to_replicate: List[str] = Field(description="Best practices to replicate")
     what_to_avoid: List[str] = Field(description="Practices to avoid")
     analysis_date: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+    @field_validator("tone_analysis", mode="before")
+    @classmethod
+    def normalize_tone_analysis(cls, value: Any) -> Dict[str, str]:
+        # Accept string or list and convert to a dict; pass through dict
+        if value is None:
+            return {}
+        if isinstance(value, str):
+            return {"summary": value}
+        if isinstance(value, list):
+            return {"summary": ", ".join(str(v) for v in value)}
+        return value
 
 # Keyword Strategy Models
 class KeywordStrategy(BaseModel):
@@ -76,6 +93,7 @@ class KeywordStrategyOutput(BaseModel):
     strategy: KeywordStrategy = Field(description="Comprehensive keyword strategy")
     implementation_notes: List[str] = Field(description="Implementation guidance")
     created_date: str = Field(default_factory=lambda: datetime.now().isoformat())
+    serp_results: Optional[Dict[str, Any]] = Field(default=None, description="SERP data used to inform the strategy")
 
 # Title Generation Models
 class TitleOption(BaseModel):
@@ -83,7 +101,14 @@ class TitleOption(BaseModel):
     type: str = Field(description="Title type (SEO, Listicle, How-to, etc.)")
     seo_score: float = Field(ge=0.0, le=10.0, description="SEO optimization score")
     engagement_score: float = Field(ge=0.0, le=10.0, description="Estimated engagement score")
-    rationale: str = Field(description="Rationale for this title option")
+    rationale: Optional[str] = Field(default="", description="Rationale for this title option")
+
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def default_rationale(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value)
 
 class TitleGenerationOutput(BaseModel):
     topic: str = Field(description="Topic for title generation")
@@ -134,6 +159,17 @@ class BlogGenerationOutput(BaseModel):
     sources_used: List[Dict[str, str]] = Field(description="Sources and citations used")
     optimization_suggestions: List[str] = Field(description="Additional optimization suggestions")
     generated_date: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+    @field_validator("content_quality_assessment", mode="before")
+    @classmethod
+    def normalize_quality_assessment(cls, value: Any) -> Dict[str, str]:
+        if value is None:
+            return {}
+        if isinstance(value, str):
+            return {"summary": value}
+        if isinstance(value, list):
+            return {"summary": ", ".join(str(v) for v in value)}
+        return value
 
 # Workflow Models
 class WorkflowStep(BaseModel):

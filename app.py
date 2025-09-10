@@ -9,9 +9,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from io import StringIO
 import base64
-import os
-from pathlib import Path
-import re
 from src.blog_generator_ai_agent.utils.constants import API_BASE_URL
 from src.blog_generator_ai_agent.logger import get_logger, LOGS_DIR
 # Page configuration
@@ -146,598 +143,14 @@ def init_session_state():
     default_values = {
         'current_step': 'overview',
         'session_id': None,
-        'session_started_at': None,
         'workflow_data': {},
         'api_responses': {},
-        'workflow_complete': False,
-        'runner': {
-            'is_running': False,
-            'is_paused': False,
-            'is_terminated': False,
-            'step_index': 0,
-            'steps': [],
-            'inputs': {},
-            'last_error': None,
-            'last_checkpoint_path': None,
-        },
-        'selected_title': None,
-        'execution_time': None,
-        'step_execution_times': {},  
-        'total_workflow_time': None,
-        'workflow_start_time': None
+        'workflow_complete': False
     }
     
     for key, value in default_values.items():
         if key not in st.session_state:
             st.session_state[key] = value
-    # Ensure Artifacts directory exists for checkpoints
-    artifacts_dir = Path(os.getcwd()) / 'Artifacts'
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
-
-def _estimate_word_count_from_html(html_content: str) -> int:
-    try:
-        # naive strip of HTML tags
-        text = re.sub(r'<[^>]+>', ' ', html_content or '')
-        words = [w for w in text.split() if w.strip()]
-        return len(words)
-    except Exception:
-        return 0
-
-# Checkpoint helpers
-def _checkpoint_path(session_id: Optional[str]) -> Path:
-    ts = datetime.now().strftime('%Y%m%d')
-    sid = session_id or 'no_session'
-    return Path(os.getcwd()) / 'Artifacts' / f'checkpoint_{sid}_{ts}.json'
-
-def save_checkpoint(extra: Dict[str, Any] = None):
-    data = {
-        'session_id': st.session_state.session_id,
-        'runner': st.session_state.runner,
-        'workflow_data': st.session_state.workflow_data,
-        'selected_title': st.session_state.get('selected_title')
-    }
-    if extra:
-        data.update(extra)
-    path = _checkpoint_path(st.session_state.session_id)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2)
-    st.session_state.runner['last_checkpoint_path'] = str(path)
-    return str(path)
-
-def load_checkpoint(path: Optional[str] = None) -> bool:
-    try:
-        if not path:
-            # load latest checkpoint in Artifacts
-            artifacts = sorted(Path(os.getcwd()).joinpath('Artifacts').glob('checkpoint_*.json'), key=os.path.getmtime, reverse=True)
-            if not artifacts:
-                return False
-            path = str(artifacts[0])
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        st.session_state.session_id = data.get('session_id')
-        st.session_state.workflow_data = data.get('workflow_data', {})
-        st.session_state.runner = data.get('runner', st.session_state.runner)
-        st.session_state.selected_title = data.get('selected_title')
-        st.session_state.runner['last_checkpoint_path'] = path
-        return True
-    except Exception as e:
-        logger.error(f"Failed to load checkpoint: {e}")
-        return False
-
-def resume_from_last_checkpoint() -> bool:
-    """Load the latest checkpoint and resume workflow execution from saved step."""
-    if load_checkpoint():
-        st.session_state.runner['is_running'] = True
-        st.session_state.runner['is_paused'] = False
-        st.session_state.runner['is_terminated'] = False
-        # Jump to workflow page so the runner engine can proceed
-        st.session_state.current_step = 'workflow'
-        save_checkpoint()
-        st.success("Resuming workflow from last checkpoint...")
-        return True
-    return False
-
-# Workflow engine helpers
-def _build_steps_for_workflow(topic: str, competitor_urls: Optional[List[str]]) -> List[str]:
-    """Build workflow steps based on inputs"""
-    steps = []
-    if not topic:
-        steps.append('topic_generation')
-    steps.append('research')
-    if competitor_urls:
-        steps.append('competitors')
-    steps.extend(['keywords', 'titles', 'structure', 'blog'])
-    return steps
-
-def _current_step_key() -> Optional[str]:
-    """Get current step key"""
-    steps = st.session_state.runner.get('steps') or []
-    idx = st.session_state.runner.get('step_index', 0)
-    if 0 <= idx < len(steps):
-        return steps[idx]
-    return None
-
-def _advance_step():
-    """Advance workflow step"""
-    st.session_state.runner['step_index'] += 1
-    if st.session_state.runner['step_index'] >= len(st.session_state.runner.get('steps', [])):
-        st.session_state.runner['is_running'] = False
-        st.session_state.workflow_complete = True
-    save_checkpoint()
-
-def display_workflow_progress_detailed():
-    """Display detailed workflow progress with current step"""
-    steps = st.session_state.runner.get('steps', [])
-    current_idx = st.session_state.runner.get('step_index', 0)
-    
-    st.subheader("📊 Workflow Progress")
-    
-    # Create progress bar
-    progress = current_idx / len(steps) if steps else 0
-    st.progress(progress)
-     
-    # Show step details with timing
-    col1, col2, col3 = st.columns([2, 1, 1])
-    
-    with col1:
-        st.write(f"**Current Step:** {current_idx} of {len(steps)}")
-        if current_idx < len(steps):
-            step_names = {
-                'topic_generation': '💡 Topic Generation',
-                'research': '🔍 Research',
-                'competitors': '🏆 Competitor Analysis',
-                'keywords': '🔑 Keywords',
-                'titles': '📰 Titles',
-                'structure': '🏗️ Structure',
-                'blog': '📝 Blog Generation'
-            }
-            current_step_name = step_names.get(steps[current_idx], steps[current_idx])
-            st.write(f"**Running:** {current_step_name}")
-    with col2:
-        status = "🟢 Running" if st.session_state.runner['is_running'] else "⏸️ Paused" if st.session_state.runner['is_paused'] else "🛑 Stopped"
-        st.write(f"**Status:** {status}")
-    with col3:
-        if st.session_state.get('execution_time'):
-            total_time = st.session_state.execution_time
-            if total_time >= 60:
-                time_display = f"{total_time//60:.0f}m {total_time%60:.0f}s"
-            else:
-                time_display = f"{total_time:.1f}s"
-            st.write(f"**Elapsed:** {time_display}")
-
-
-def execute_workflow_step(step: str):
-    """Execute a single workflow step"""
-
-
-    step_start_time = time.time()
-    inputs = st.session_state.runner['inputs']
-    
-    # Ensure session id is set by first successful API call
-    def _capture_session(resp: Dict[str, Any]):
-        if not st.session_state.session_id:
-            st.session_state.session_id = resp.get('session_id')
-    
-    try:
-        if step == 'topic_generation':
-            with st.spinner("🔄 Generating topics..."):
-                resp = make_api_request(config.ENDPOINTS['topic_generate'], method='POST', data={
-                    'pillar': inputs['pillar']
-                })
-                if check_response_for_errors(resp, 'Topic Generation'):
-                    st.session_state.runner['last_error'] = 'Topic generation failed'
-                    return
-                
-                topics = resp.get('topics', [])
-                if topics:
-                    best_title = topics[0].get('title', '')
-                    inputs['topic'] = best_title
-                    st.info(f"✅ Auto-selected topic: {best_title}")
-                
-                st.session_state.workflow_data['topic_generation'] = resp
-                _capture_session(resp)
-                save_checkpoint()
-                _advance_step()
-                
-                
-        elif step == 'research':
-            with st.spinner("🔄 Running research..."):
-                resp = make_api_request(config.ENDPOINTS['research_run'], method='POST', data={
-                    'topic': inputs['topic'],
-                    'mode': inputs['mode'],
-                    'urls': inputs['urls'],
-                    'uploads': inputs['uploads'],
-                    'pillar': inputs['pillar']
-                })
-                if check_response_for_errors(resp, 'Research'):
-                    st.session_state.runner['last_error'] = 'Research failed'
-                    return
-                
-                st.session_state.workflow_data['research'] = resp
-                _capture_session(resp)
-                save_checkpoint()
-                _advance_step()
-                
-        elif step == 'competitors':
-            with st.spinner("🔄 Analyzing competitors..."):
-                resp = make_api_request(config.ENDPOINTS['competitors_analyse'], method='POST', data={
-                    'topic': inputs['topic'],
-                    'urls': inputs['competitor_urls'],
-                    'research_method': 'SERP'
-                })
-                if check_response_for_errors(resp, 'Competitor Analysis'):
-                    st.session_state.runner['last_error'] = 'Competitor analysis failed'
-                    return
-                
-                st.session_state.workflow_data['competitor_analysis'] = resp
-                _capture_session(resp)
-                save_checkpoint()
-                _advance_step()
-                
-        elif step == 'keywords':
-            with st.spinner("🔄 Generating keywords..."):
-                research_data = st.session_state.workflow_data.get('research', {}) or {}
-                # Minimize payload for better performance
-                minimal_findings_payload = {
-                    'key_insights': research_data.get('key_insights', [])[:10],
-                    'statistics': research_data.get('statistics', [])[:10],
-                    'findings': research_data.get('findings', [])[:10]
-                }
-                
-                resp = make_api_request(config.ENDPOINTS['seo_keywords'], method='POST', data={
-                    'topic': inputs['topic'],
-                    'findings': json.dumps(minimal_findings_payload),
-                    'primary_keyword': '',
-                    'pillar': inputs['pillar'],
-                    'research_method': inputs['mode'],
-                    'competitor_urls': inputs['competitor_urls'] or None
-                })
-                if check_response_for_errors(resp, 'Keyword Strategy'):
-                    st.session_state.runner['last_error'] = 'Keyword generation failed'
-                    return
-                
-                st.session_state.workflow_data['keywords_strategy'] = resp
-                _capture_session(resp)
-                save_checkpoint()
-                _advance_step()
-                
-        elif step == 'titles':
-            with st.spinner("🔄 Generating titles..."):
-                strategy = st.session_state.workflow_data.get('keywords_strategy', {}).get('strategy', {})
-                primary = strategy.get('primary_keyword', '')
-                secondary = strategy.get('secondary_keywords', [])
-                
-                resp = make_api_request(config.ENDPOINTS['titles_generate'], method='POST', data={
-                    'topic': inputs['topic'],
-                    'primary': primary,
-                    'secondary': secondary,
-                    'research_method': inputs['mode'],
-                    'competitor_urls': inputs['competitor_urls'] or None
-                })
-                if check_response_for_errors(resp, 'Title Generation'):
-                    st.session_state.runner['last_error'] = 'Title generation failed'
-                    return
-                
-                st.session_state.workflow_data['title_generation'] = resp
-                _capture_session(resp)
-                save_checkpoint()
-                
-                # Auto-select best title
-                options = resp.get('title_options', []) or []
-                if options:
-                    chosen_idx = 0
-                    best_score = None
-                    for i, opt in enumerate(options):
-                        score = opt.get('seo_score')
-                        if isinstance(score, (int, float)):
-                            if best_score is None or score > best_score:
-                                best_score = score
-                                chosen_idx = i
-                    st.session_state.selected_title = options[chosen_idx].get('title', '')
-                    st.info(f"✅ Auto-selected title: {st.session_state.selected_title}")
-                
-                _advance_step()
-                
-        elif step == 'structure':
-            with st.spinner("🔄 Creating structure..."):
-                strategy = st.session_state.workflow_data.get('keywords_strategy', {})
-                primary_kw = strategy.get('strategy', {}).get('primary_keyword', '')
-                
-                # Ensure we have a valid topic
-                topic = (
-                    st.session_state.get('selected_title') or 
-                    inputs.get('topic') or 
-                    'Untitled Blog Post'
-                )
-                
-                # Ensure competitor_urls is a list, not None
-                competitor_urls = []
-                if 'competitor_urls' in inputs and inputs['competitor_urls']:
-                    if isinstance(inputs['competitor_urls'], str):
-                        competitor_urls = [url.strip() for url in inputs['competitor_urls'].split('\n') if url.strip()]
-                    elif isinstance(inputs['competitor_urls'], list):
-                        competitor_urls = [url for url in inputs['competitor_urls'] if url]
-                
-                # Prepare request data with proper validation
-                request_data = {
-                    'topic': topic,
-                    'structure_type': inputs.get('structure', 'How-to Guide'),
-                    'keywords': strategy or {},
-                    'primary_keyword': primary_kw or '',
-                    'research_method': inputs.get('mode', 'SERP'),
-                    'competitor_urls': competitor_urls
-                }
-                
-                logger.info(f"Creating structure with data: {json.dumps(request_data, indent=2)}")
-                
-                resp = make_api_request(
-                    config.ENDPOINTS['structure_create'], 
-                    method='POST', 
-                    data=request_data
-                )
-                
-                if check_response_for_errors(resp, 'Content Structure'):
-                    error_msg = resp.get('detail', 'Structure creation failed')
-                    logger.error(f"Structure creation failed: {error_msg}")
-                    st.session_state.runner['last_error'] = f'Structure creation failed: {error_msg}'
-                    return
-                
-                st.session_state.workflow_data['content_structure'] = resp
-                _capture_session(resp)
-                save_checkpoint()
-                _advance_step()
-                
-        elif step == 'blog':
-            with st.spinner("🔄 Generating blog post..."):
-                strategy = st.session_state.workflow_data.get('keywords_strategy', {})
-                primary_kw = strategy.get('strategy', {}).get('primary_keyword', '')
-                
-                # Build orchestration context from workflow data
-                def _build_workflow_orchestration_context() -> str:
-                    oc_parts = []
-                    research = st.session_state.workflow_data.get('research') or {}
-                    if research.get('key_insights'):
-                        oc_parts.append("Research - Key Insights:\n" + "\n".join(f"- {s}" for s in research.get('key_insights', [])[:5]))
-                    if research.get('statistics'):
-                        oc_parts.append("Research - Statistics:\n" + "\n".join(f"- {s}" for s in research.get('statistics', [])[:5]))
-                    if research.get('content_gaps'):
-                        oc_parts.append("Research - Content Gaps:\n" + "\n".join(f"- {s}" for s in research.get('content_gaps', [])[:5]))
-                    
-                    competitor = st.session_state.workflow_data.get('competitor_analysis') or {}
-                    if competitor.get('differentiation_opportunities'):
-                        oc_parts.append("Competitor - Differentiation Opportunities:\n" + "\n".join(f"- {s}" for s in competitor.get('differentiation_opportunities', [])[:5]))
-                    if competitor.get('common_patterns'):
-                        oc_parts.append("Competitor - Common Patterns:\n" + "\n".join(f"- {s}" for s in competitor.get('common_patterns', [])[:5]))
-                    
-                    if strategy and strategy.get('strategy'):
-                        strategy_data = strategy['strategy']
-                        secondary_keywords = strategy_data.get('secondary_keywords', [])
-                        oc_parts.append(
-                            "Keyword Strategy:\n" + "\n".join([
-                                f"- Primary: {strategy_data.get('primary_keyword', '')}",
-                                f"- Secondary: {', '.join(secondary_keywords)}",
-                                f"- Long-tail: {', '.join(strategy_data.get('long_tail_opportunities', [])[:5])}",
-                                f"- Intent: {strategy_data.get('search_intent', '')}",
-                                f"- Density: {strategy_data.get('recommended_density', '')}",
-                            ])
-                        )
-                    
-                    structure = st.session_state.workflow_data.get('content_structure') or {}
-                    if structure.get('heading_structure'):
-                        oc_parts.append("Outline - Headings:\n" + "\n".join(f"- {h}" for h in structure.get('heading_structure', [])[:15]))
-                    
-                    if research.get('sources'):
-                        oc_parts.append(
-                            "Sources (top):\n" + "\n".join(
-                                f"- {s.get('title', s.get('url', ''))}: {s.get('url', '')}" for s in research.get('sources', [])[:5]
-                            )
-                        )
-                    
-                    return "\n\n".join([p for p in oc_parts if p])
-                
-                orchestration_context = _build_workflow_orchestration_context()
-                
-                resp = make_api_request(config.ENDPOINTS['blog_generate'], method='POST', data={
-                    'topic': inputs['topic'],
-                    'structure_type': inputs['structure'],
-                    'primary_keyword': primary_kw,
-                    'keywords': strategy,
-                    'brand_voice': inputs['brand_voice'],
-                    'research_method': inputs['mode'],
-                    'competitor_urls': inputs['competitor_urls'] or None,
-                    'selected_title': st.session_state.get('selected_title', ''),
-                    'orchestration_context': orchestration_context
-                })
-                if check_response_for_errors(resp, 'Blog Generation'):
-                    st.session_state.runner['last_error'] = 'Blog generation failed'
-                    return
-                
-                st.session_state.workflow_data['blog_generation'] = resp
-                # Stop timer
-                
-                _capture_session(resp)
-                save_checkpoint()
-                _advance_step()
-                
-        step_end_time = time.time()
-        step_duration = step_end_time - step_start_time
-        
-        # Store step execution time
-        if 'step_execution_times' not in st.session_state:
-            st.session_state.step_execution_times = {}
-        st.session_state.step_execution_times[step] = step_duration
-        
-        # Update total execution time
-        total_time = sum(st.session_state.step_execution_times.values())
-        st.session_state.execution_time = total_time
-        
-        logger.info(f"Step {step} completed in {step_duration:.2f}s. Total workflow time: {total_time:.2f}s")
-        
-
-    except Exception as e:
-        # Record timing even for failed steps
-        step_end_time = time.time()
-        step_duration = step_end_time - step_start_time
-        st.session_state.step_execution_times[step] = step_duration
-
-        logger.error(f"Error executing step {step}: {e}")
-        st.session_state.runner['last_error'] = f"Step {step} failed: {str(e)}"
-        st.error(f"❌ Error in {step}: {str(e)}")
-    
-    st.rerun()
-
-def display_workflow_results_incremental():
-    """Display workflow results as they become available"""
-    if not st.session_state.workflow_data:
-        return
-    
-    st.markdown("---")
-    st.subheader("📋 Workflow Results")
-    
-    # Display each completed step
-    if st.session_state.workflow_data.get('topic_generation'):
-        with st.expander("💡 Topic Generation Results", expanded=False):
-            topics = st.session_state.workflow_data['topic_generation'].get('topics', [])
-            if topics:
-                for i, topic in enumerate(topics[:5], 1):
-                    st.write(f"{i}. {topic.get('title', 'Untitled')}")
-            render_json_viewer(st.session_state.workflow_data['topic_generation'], "Topic Generation")
-    
-    if st.session_state.workflow_data.get('research'):
-        with st.expander("🔍 Research Results", expanded=False):
-            research = st.session_state.workflow_data['research']
-            findings = research.get('findings', [])
-            if findings:
-                st.write(f"**Total Findings:** {len(findings)}")
-                key_insights = research.get('key_insights', [])
-                if key_insights:
-                    st.write("**Key Insights:**")
-                    for insight in key_insights[:3]:
-                        st.info(insight)
-            render_json_viewer(research, "Research")
-    
-    if st.session_state.workflow_data.get('competitor_analysis'):
-        with st.expander("🏆 Competitor Analysis Results", expanded=False):
-            comp_analysis = st.session_state.workflow_data['competitor_analysis']
-            summaries = comp_analysis.get('competitor_summaries', [])
-            if summaries:
-                st.write(f"**Competitors Analyzed:** {len(summaries)}")
-                for summary in summaries[:3]:
-                    with st.expander(f"🔍 {summary.get('url', 'Unknown URL')}"):
-                        st.write(f"**Title:** {summary.get('title', 'N/A')}")
-                        st.write(f"**Summary:** {summary.get('summary', 'N/A')[:200]}...")
-            render_json_viewer(comp_analysis, "Competitor Analysis")
-    
-    if st.session_state.workflow_data.get('keywords_strategy'):
-        with st.expander("🔑 Keyword Strategy Results", expanded=False):
-            strategy_data = st.session_state.workflow_data['keywords_strategy']
-            strategy = strategy_data.get('strategy', {})
-            if strategy:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Primary Keyword:** {strategy.get('primary_keyword', 'N/A')}")
-                    st.write(f"**Search Intent:** {strategy.get('search_intent', 'N/A')}")
-                with col2:
-                    secondary = strategy.get('secondary_keywords', [])
-                    if secondary:
-                        st.write("**Secondary Keywords:**")
-                        for kw in secondary[:5]:
-                            st.write(f"• {kw}")
-            render_json_viewer(strategy_data, "Keyword Strategy")
-    
-    if st.session_state.workflow_data.get('title_generation'):
-        with st.expander("📰 Title Options Results", expanded=False):
-            title_data = st.session_state.workflow_data['title_generation']
-            options = title_data.get('title_options', [])
-            if options:
-                st.write(f"**Generated {len(options)} title options:**")
-                for i, option in enumerate(options, 1):
-                    st.write(f"{i}. **{option.get('type', 'Standard')}:** {option.get('title', 'N/A')}")
-                    if option.get('seo_score'):
-                        st.caption(f"SEO Score: {option.get('seo_score')}")
-            render_json_viewer(title_data, "Title Options")
-    
-    if st.session_state.workflow_data.get('content_structure'):
-        with st.expander("🏗️ Content Structure Results", expanded=False):
-            structure_data = st.session_state.workflow_data['content_structure']
-            sections = structure_data.get('sections', [])
-            if sections:
-                st.write(f"**Content Structure with {len(sections)} sections:**")
-                for i, section in enumerate(sections, 1):
-                    with st.expander(f"Section {i}: {section.get('heading_text', 'N/A')}"):
-                        st.write(f"**Heading Level:** {section.get('heading_level', 'N/A')}")
-                        st.write(f"**Content Intent:** {section.get('content_intent', 'N/A')}")
-                        keypoints = section.get("key_points", [])
-                        if keypoints:
-                            st.write("**Key Points:**")
-                            for j, keypoint in enumerate(keypoints, 1):
-                                st.write(f"{j}. {keypoint}")
-            render_json_viewer(structure_data, "Content Structure")
-    
-    if st.session_state.workflow_data.get('blog_generation'):
-        with st.expander("📄 Generated Blog Post", expanded=True):
-            blog_data = st.session_state.workflow_data['blog_generation']
-            blog_content = blog_data.get('blog_content', '')
-            metadata = blog_data.get('metadata', {})
-            
-            if blog_content:
-                # Show blog metadata
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    wc = metadata.get("word_count", 0)
-                    st.metric("Word Count", wc)
-                with col2:
-                    rt = metadata.get("reading_time", "N/A")
-                    st.metric("Reading Time", rt)
-                with col3:
-                    seo_score = metadata.get("seo_score", "N/A")
-                    st.metric("SEO Score", seo_score)
-                # with col4:
-                #     keywords_count = metadata.get("keywords_count", 0)
-                #     st.metric("Keywords Used", keywords_count)
-                
-                # Blog content display
-                st.markdown(blog_content, unsafe_allow_html=True)
-                
-                # Download options
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.download_button(
-                        "📥 Download as Markdown",
-                        blog_content,
-                        file_name=f"blog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                        mime="text/markdown"
-                    )
-                
-                with col2:
-                    # Convert to HTML for download
-                    html_content = f"""
-                    <html>
-                    <head>
-                        <title>{st.session_state.runner['inputs'].get('topic', 'Blog Post')}</title>
-                        <style>
-                            body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }}
-                            h1, h2, h3 {{ color: #333; }}
-                            p {{ line-height: 1.6; }}
-                        </style>
-                    </head>
-                    <body>
-                        {blog_content}
-                    </body>
-                    </html>
-                    """
-                    st.download_button(
-                        "📥 Download as HTML",
-                        html_content,
-                        file_name=f"blog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
-                        mime="text/html"
-                    )
-            
-            render_json_viewer(blog_data, "Blog Generation")
-    
-    # Show completion status
-    if st.session_state.workflow_complete:
-        st.success("🎉 Workflow completed successfully! You can now download your generated content.")
 
 # Enhanced Error Display Components
 def display_error_message(error_data: Dict[str, Any], title: str = "⚠️ Error Occurred"):
@@ -816,7 +229,6 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
             # Avoid logging huge payloads - summarize
             keys = list(data.keys())
             logger.debug(f"API request payload keys: {keys[:10]}{'...' if len(keys) > 10 else ''}")
-        _t0 = time.time()
         if method == "POST":
             if files:
                 logger.info(f"Uploading files: {[name for name in files.keys()]} to {endpoint}")
@@ -828,17 +240,6 @@ def make_api_request(endpoint: str, method: str = "GET", data: dict = None, file
         
         response.raise_for_status()
         json_resp = response.json()
-        # Attach timestamps and client-side elapsed time
-        now_iso = datetime.now().isoformat()
-        if isinstance(json_resp, dict):
-            json_resp["received_at"] = now_iso
-            json_resp["client_request_ms"] = int((time.time() - _t0) * 1000)
-        # If state has no start time and this response looks like a session init, capture it
-        if isinstance(json_resp, dict) and not st.session_state.get('session_started_at'):
-            server_created = json_resp.get('created_at') or json_resp.get('timestamp') or json_resp.get('generation_date')
-            st.session_state['session_started_at'] = server_created or now_iso
-        # Attach client-side elapsed time (ms)
-        json_resp["client_request_ms"] = int((time.time() - _t0) * 1000)
         # Log a compact summary of response
         if isinstance(json_resp, dict):
             top_keys = list(json_resp.keys())
@@ -988,20 +389,11 @@ def display_session_info():
         
         if st.session_state.session_id:
             st.write(f"**Session ID:** {st.session_state.session_id[:8]}...")
-            started_at = st.session_state.get('session_started_at')
-            if started_at:
-                try:
-                    st.write(f"**Started:** {started_at}")
-                except Exception:
-                    st.write(f"**Started:** {started_at}")
+            st.write(f"**Started:** {datetime.now().strftime('%H:%M:%S')}")
             
             # Session data summary
             completed_steps = len([k for k in st.session_state.workflow_data.keys() if k != 'session_id'])
             st.write(f"**Completed Steps:** {completed_steps}/8")
-            if st.button("▶ Resume from Last Checkpoint", use_container_width=True):
-                if not resume_from_last_checkpoint():
-                    st.warning("No checkpoint found to resume.")
-                st.rerun()
         else:
             st.write("No active session")
 
@@ -1058,32 +450,13 @@ def render_metrics_dashboard(data: dict):
     if 'blog_generation' in data:
         blog_data = data['blog_generation']
         metadata = blog_data.get('metadata', {})
-        wc = metadata.get('word_count')
-        if not isinstance(wc, int) or wc == 0:
-            wc = _estimate_word_count_from_html(blog_data.get('blog_content', ''))
-        available_metrics.append(("Word Count", wc))
+        available_metrics.append(("Word Count", metadata.get('word_count', 0)))
     
     # Complete workflow metrics
     if 'complete_workflow' in data:
         workflow_data = data['complete_workflow']
         available_metrics.append(("Workflow Status", workflow_data.get('final_status', 'completed').title()))
     
-   # Execution time metrics
-    if st.session_state.get('execution_time'):
-        total_time = st.session_state.execution_time
-        if total_time >= 60:
-            time_display = f"{total_time//60:.0f}m {total_time%60:.1f}s"
-        else:
-            time_display = f"{total_time:.1f}s"
-        available_metrics.append(("Total Time", time_display))
-
-    # Step timing breakdown
-    step_times = st.session_state.get('step_execution_times', {})
-    if step_times:
-        slowest_step = max(step_times, key=step_times.get)
-        slowest_time = step_times[slowest_step]
-        available_metrics.append(("Slowest Step", f"{slowest_step} ({slowest_time:.1f}s)"))
-
     # Create columns dynamically
     if available_metrics:
         cols = st.columns(min(len(available_metrics), 4))
@@ -1094,29 +467,6 @@ def render_metrics_dashboard(data: dict):
                     st.metric(label, value)
                 else:
                     st.metric(label, value, help=f"{label} from completed workflow")
-    # Show detailed step timings
-    if step_times:
-        st.subheader("⏱️ Step Execution Times")
-        timing_cols = st.columns(len(step_times))
-        
-        step_names = {
-            'topic_generation': '💡 Topics',
-            'research': '🔍 Research', 
-            'competitors': '🏆 Competitors',
-            'keywords': '🔑 Keywords',
-            'titles': '📰 Titles',
-            'structure': '🗂️ Structure',
-            'blog': '📝 Blog'
-        }
-        
-        for i, (step, duration) in enumerate(step_times.items()):
-            with timing_cols[i % len(timing_cols)]:
-                step_name = step_names.get(step, step.title())
-                if duration >= 60:
-                    time_str = f"{duration//60:.0f}m {duration%60:.1f}s"
-                else:
-                    time_str = f"{duration:.1f}s"
-                st.metric(step_name, time_str)
     
     # Show completion status
     st.info(f"✅ **{completed_steps} workflow steps completed**")
@@ -1346,11 +696,8 @@ def render_research_page():
                 st.session_state.workflow_data['research'] = response
                 st.success("✅ Research completed successfully!")
             
-            # Display research results and timing
+            # Display research results
             findings = response.get("findings", [])
-            elapsed_ms = response.get("client_request_ms")
-            if isinstance(elapsed_ms, int):
-                st.caption(f"⏱️ Research request time: {elapsed_ms} ms | Received at: {response.get('received_at', 'n/a')}")
             if findings:
                 st.subheader(f"📊 Research Results ({len(findings)} findings)")
                 
@@ -1451,11 +798,8 @@ def render_competitor_analysis_page():
                 st.session_state.workflow_data['competitor_analysis'] = response
                 st.success(f"✅ Analyzed {len(urls)} competitors!")
             
-            # Display competitor analysis results and timing
+            # Display competitor analysis results
             summaries = response.get("competitor_summaries", [])
-            elapsed_ms = response.get("client_request_ms")
-            if isinstance(elapsed_ms, int):
-                st.caption(f"⏱️ Competitor analysis time: {elapsed_ms} ms | Received at: {response.get('received_at', 'n/a')}")
             if summaries:
                 st.subheader("📊 Competitor Analysis Results")
                 
@@ -1571,11 +915,8 @@ def render_keywords_page():
                 st.session_state.workflow_data['keywords_strategy'] = response
                 st.success("✅ Keyword strategy generated!")
             
-            # Display keyword strategy and timing
+            # Display keyword strategy
             strategy = response.get("strategy", {})
-            elapsed_ms = response.get("client_request_ms")
-            if isinstance(elapsed_ms, int):
-                st.caption(f"⏱️ Keyword generation time: {elapsed_ms} ms | Received at: {response.get('received_at', 'n/a')}")
             if strategy:
                 st.subheader("🎯 Keyword Strategy")
                 
@@ -1694,11 +1035,8 @@ def render_titles_page():
                 st.session_state.workflow_data['title_generation'] = response
                 st.success("✅ Title options generated!")
             
-            # Display title options and timing
+            # Display title options
             title_options = response.get("title_options", [])
-            elapsed_ms = response.get("client_request_ms")
-            if isinstance(elapsed_ms, int):
-                st.caption(f"⏱️ Title generation time: {elapsed_ms} ms | Received at: {response.get('received_at', 'n/a')}")
             if title_options:
                 st.subheader("📝 Title Options")
                 
@@ -1710,8 +1048,6 @@ def render_titles_page():
                 
                 if selected_title_idx is not None:
                     selected_title = title_options[selected_title_idx]
-                    # Persist chosen title text for later blog generation
-                    st.session_state.selected_title = selected_title.get('title')
                     
                     # Show title details
                     st.info(f"**Selected:** {selected_title.get('title', 'N/A')}")
@@ -1813,11 +1149,8 @@ def render_structure_page():
                 st.session_state.workflow_data['content_structure'] = response
                 st.success("✅ Content structure created!")
             
-            # Display structure and timing
+            # Display structure
             sections = response.get("sections", [])
-            elapsed_ms = response.get("client_request_ms")
-            if isinstance(elapsed_ms, int):
-                st.caption(f"⏱️ Structure creation time: {elapsed_ms} ms | Received at: {response.get('received_at', 'n/a')}")
             if sections:
                 st.subheader("📋 Content Structure")
                 
@@ -1907,20 +1240,6 @@ def render_blog_generation_page():
     
     if submitted and topic:
         with st.spinner("🔄 Generating blog post... This may take a few minutes."):
-            # Build orchestration context from prior steps to constrain the LLM strictly
-            def _build_orchestration_context() -> str:
-                oc_parts = []
-                research = st.session_state.workflow_data.get('research') or {}
-                if research.get('key_insights'):
-                    oc_parts.append("Outline - Key Insights:\n" + "\n".join(f"- {s}" for s in research.get('key_insights', [])[:5]))
-                if research.get('statistics'):
-                    oc_parts.append("Research - Statistics:\n" + "\n".join(f"- {s}" for s in research.get('statistics', [])[:5]))
-                structure = st.session_state.workflow_data.get('content_structure') or {}
-                headings = structure.get('heading_structure') or []
-                if headings:
-                    oc_parts.append("Outline - Headings:\n" + "\n".join(f"- {h}" for h in headings[:20]))
-                return "\n\n".join([p for p in oc_parts if p])
-
             request_data = {
                 "topic": topic,
                 "structure_type": structure_type,
@@ -1930,13 +1249,6 @@ def render_blog_generation_page():
                 "research_method": "SERP",
                 "competitor_urls": [u.strip() for u in competitor_urls_input.split('\n') if u.strip()] if competitor_urls_input else None
             }
-            # Attach selected title into client-side context so backend prompt uses it strictly
-            if st.session_state.get('selected_title'):
-                request_data["selected_title"] = st.session_state.selected_title
-            # Attach orchestration context to help enforce structure (server may ignore extra fields, but prompt uses them)
-            oc = _build_orchestration_context()
-            if oc:
-                request_data["orchestration_context"] = oc
             
             logger.info("Submitting Blog Generation request")
             response = make_api_request(
@@ -1958,12 +1270,9 @@ def render_blog_generation_page():
                 st.session_state.workflow_data['blog_generation'] = response
                 st.success("✅ Blog post generated successfully!")
             
-            # Display blog content and timing
+            # Display blog content
             blog_content = response.get("blog_content", "")
             metadata = response.get("metadata", {})
-            elapsed_ms = response.get("client_request_ms")
-            if isinstance(elapsed_ms, int):
-                st.caption(f"⏱️ Blog generation time: {elapsed_ms} ms | Received at: {response.get('received_at', 'n/a')}")
             
             if blog_content:
                 st.subheader("📄 Generated Blog Post")
@@ -1971,23 +1280,13 @@ def render_blog_generation_page():
                 # Blog metadata
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    # Fallback compute if not provided
-                    wc = metadata.get("word_count")
-                    if not isinstance(wc, int) or wc == 0:
-                        wc = _estimate_word_count_from_html(blog_content)
-                    st.metric("Word Count", wc)
+                    st.metric("Word Count", metadata.get("word_count", 0))
                 with col2:
-                    # If reading_time missing, estimate at 200 wpm
-                    rt = metadata.get('reading_time')
-                    if not rt:
-                        wpm = 200
-                        minutes = max(1, int(round(wc / wpm))) if wc else 1
-                        rt = f"{minutes} min"
-                    st.metric("Reading Time", rt)
+                    st.metric("Reading Time", f"{metadata.get('reading_time', 0)} min")
                 with col3:
                     st.metric("SEO Score", metadata.get("seo_score", "N/A"))
-                # with col4:
-                #     st.metric("Keywords Used", metadata.get("keywords_count", 0))
+                with col4:
+                    st.metric("Keywords Used", metadata.get("keywords_count", 0))
                 
                 # Blog content display
                 with st.expander("📖 View Full Blog Post", expanded=True):
@@ -2008,7 +1307,7 @@ def render_blog_generation_page():
                     html_content = f"""
                     <html>
                     <head>
-                        
+                        <title>{topic}</title>
                         <style>
                             body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }}
                             h1, h2, h3 {{ color: #333; }}
@@ -2040,12 +1339,12 @@ def render_blog_generation_page():
             st.session_state.workflow_complete = True
 
 def render_complete_workflow_page():
-    """Render complete workflow automation page with step-by-step execution"""
+    """Render complete workflow automation page"""
     st.markdown('<div class="step-header">⚡ Complete Workflow Automation</div>', unsafe_allow_html=True)
     
     st.markdown("""
-    Run the entire blog generation workflow automatically with step-by-step execution. 
-    You can pause, resume, and control the workflow at any time.
+    Run the entire blog generation workflow automatically. This will execute all steps 
+    from topic generation to final blog post in one streamlined process.
     """)
     
     with st.form("complete_workflow_form"):
@@ -2104,36 +1403,16 @@ def render_complete_workflow_page():
             help="Upload documents for reference"
         )
         
-        col_actions = st.columns(3)
-        with col_actions[0]:
-            submitted = st.form_submit_button("🚀 Start Workflow", use_container_width=True)
-        with col_actions[1]:
-            save_ckpt_clicked = st.form_submit_button("💾 Save Checkpoint", use_container_width=True)
-        with col_actions[2]:
-            load_ckpt_clicked = st.form_submit_button("📂 Load Checkpoint", use_container_width=True)
- 
-    # Handle load/save checkpoint actions
-    if 'save_ckpt_clicked' in locals() and save_ckpt_clicked:
-        path = save_checkpoint()
-        st.success(f"Checkpoint saved: {os.path.basename(path)}")
-    if 'load_ckpt_clicked' in locals() and load_ckpt_clicked:
-        if load_checkpoint():
-            st.success("Loaded last checkpoint.")
-            st.rerun()
-        else:
-            st.warning("No checkpoint found to load.")
-
-    if submitted and pillar:
-        # Initialize timing when workflow starts
-        st.session_state.workflow_start_time = time.time()
-        st.session_state.step_execution_times = {}
-        st.session_state.execution_time = 0
-        
+        submitted = st.form_submit_button("🚀 Run Complete Workflow", use_container_width=True)
+    
+    if submitted and topic and pillar:
         # Prepare URLs
         urls = []
         if urls_input.strip():
             urls = [url.strip() for url in urls_input.split('\n') if url.strip()]
-        competitor_urls = [u.strip() for u in competitor_urls_input.split('\n') if u.strip()] if competitor_urls_input and competitor_urls_input.strip() else []
+        competitor_urls = None
+        if competitor_urls_input and competitor_urls_input.strip():
+            competitor_urls = [u.strip() for u in competitor_urls_input.split('\n') if u.strip()]
         
         # Handle file uploads
         uploads = []
@@ -2149,89 +1428,116 @@ def render_complete_workflow_page():
                     if "error" not in upload_response:
                         uploads.append(upload_response.get("file_path", ""))
         
-        # Initialize workflow runner
-        st.session_state.runner['inputs'] = {
-            'topic': topic.strip() if topic else '',
-            'pillar': pillar,
-            'mode': mode,
-            'structure': structure,
-            'brand_voice': brand_voice,
-            'urls': urls,
-            'uploads': uploads,
-            'competitor_urls': competitor_urls,
-        }
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        # Build workflow steps
-        steps = []
-        if not topic.strip():
-            steps.append('topic_generation')
-        steps.extend(['research', 'keywords', 'titles', 'structure', 'blog'])
-        if competitor_urls:
-            steps.insert(-4, 'competitors')  # Insert after research, before keywords
-        
-        st.session_state.runner['steps'] = steps
-        st.session_state.runner['step_index'] = 0
-        st.session_state.runner['is_running'] = True
-        st.session_state.runner['is_paused'] = False
-        st.session_state.runner['is_terminated'] = False
-        save_checkpoint()
-
-    # Workflow controls
-    if st.session_state.runner.get('steps'):
-        st.markdown("---")
-        st.subheader("🎮 Workflow Controls")
-        
-        ctrl_cols = st.columns(4)
-        with ctrl_cols[0]:
-            if st.button("⏸️ Pause", use_container_width=True, disabled=not st.session_state.runner['is_running'] or st.session_state.runner['is_paused']):
-                st.session_state.runner['is_paused'] = True
-                save_checkpoint()
-                st.rerun()
-        with ctrl_cols[1]:
-            if st.button("▶️ Resume", use_container_width=True, disabled=not st.session_state.runner['is_paused']):
-                st.session_state.runner['is_paused'] = False
-                st.session_state.runner['is_running'] = True
-                save_checkpoint()
-                st.rerun()
-        with ctrl_cols[2]:
-            if st.button("🛑 Terminate", use_container_width=True, disabled=not st.session_state.runner['is_running']):
-                st.session_state.runner['is_running'] = False
-                st.session_state.runner['is_paused'] = False
-                st.session_state.runner['is_terminated'] = True
-                save_checkpoint()
-                st.success("Workflow terminated.")
-        # with ctrl_cols[3]:
-        #     if st.button("🔄 Reset", use_container_width=True):
-        #         st.session_state.runner = {
-        #             'is_running': False,
-        #             'is_paused': False,
-        #             'is_terminated': False,
-        #             'step_index': 0,
-        #             'steps': [],
-        #             'inputs': {},
-        #             'last_error': None,
-        #             'last_checkpoint_path': None,
-        #         }
-        #         st.session_state.workflow_data = {}
-        #         st.rerun()
-
-    # Show workflow progress
-    if st.session_state.runner.get('steps'):
-        display_workflow_progress_detailed()
-
-    # Execute workflow steps
-    current_step = _current_step_key()
-    if st.session_state.runner['is_running'] and not st.session_state.runner['is_paused'] and not st.session_state.runner['is_terminated'] and current_step:
-       
-        execute_workflow_step(current_step)
-        # Update total workflow time if completed
-        if st.session_state.workflow_complete and st.session_state.workflow_start_time:
-            total_workflow_time = time.time() - st.session_state.workflow_start_time
-            st.session_state.total_workflow_time = total_workflow_time
-
-    # Display results after each step
-    display_workflow_results_incremental()
-
+        with st.spinner("🔄 Running complete workflow..."):
+            status_text.text("Starting workflow...")
+            progress_bar.progress(0.1)
+            
+            request_data = {
+                "topic": topic,
+                "pillar": pillar,
+                "mode": mode,
+                "structure": structure,
+                "brand_voice": brand_voice
+            }
+            
+            if urls:
+                request_data["urls"] = urls
+            if uploads:
+                request_data["uploads"] = uploads
+            if competitor_urls:
+                request_data["competitor_urls"] = competitor_urls
+            
+            status_text.text("Executing workflow steps...")
+            progress_bar.progress(0.5)
+            
+            logger.info("Submitting Complete Workflow request")
+            response = make_api_request(
+                config.ENDPOINTS["workflow_run"],
+                method="POST",
+                data=request_data
+            )
+            
+            progress_bar.progress(1.0)
+            
+            # Check for errors first
+            if check_response_for_errors(response, "Complete Workflow"):
+                # If there are errors, still show the response data if available
+                if "final_blog_content" in response and response["final_blog_content"]:
+                    st.warning("⚠️ Complete workflow completed with some errors, but content was generated.")
+                    st.session_state.session_id = response.get("session_id")
+                    st.session_state.workflow_data['complete_workflow'] = response
+                    st.session_state.workflow_complete = True
+                else:
+                    st.error("❌ Complete workflow failed. Please try again.")
+                    progress_bar.empty()
+                    status_text.empty()
+                    return
+            else:
+                st.session_state.session_id = response.get("session_id")
+                st.session_state.workflow_data['complete_workflow'] = response
+                st.session_state.workflow_complete = True
+                st.success("✅ Complete workflow executed successfully!")
+            
+            status_text.empty()
+            progress_bar.empty()
+            
+            # Display workflow results
+            st.subheader("🎉 Workflow Results")
+            
+            # Metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            success_metrics = response.get("success_metrics", {})
+            
+            with col1:
+                st.metric("Status", response.get("final_status", "completed").title())
+            with col2:
+                st.metric("Execution Time", response.get("execution_time", "N/A"))
+            with col3:
+                st.metric("Steps Completed", success_metrics.get("steps_completed", 0))
+            with col4:
+                st.metric("Word Count", success_metrics.get("final_word_count", 0))
+            
+            # Generated content preview
+            if response.get("final_blog_content"):
+                st.subheader("📄 Generated Blog Post")
+                
+                with st.expander("📖 View Generated Blog", expanded=False):
+                    st.markdown(response.get("final_blog_content", ""), unsafe_allow_html=True)
+                
+                # Download options
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "📥 Download Blog (Markdown)",
+                        response.get("final_blog_content", ""),
+                        file_name=f"complete_workflow_blog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                        mime="text/markdown"
+                    )
+                
+                with col2:
+                    # Create workflow summary
+                    workflow_summary = {
+                        "topic": topic,
+                        "pillar": pillar,
+                        "execution_time": response.get("execution_time"),
+                        "final_status": response.get("final_status"),
+                        "success_metrics": success_metrics,
+                        "generated_at": datetime.now().isoformat()
+                    }
+                    
+                    st.download_button(
+                        "📥 Download Summary (JSON)",
+                        json.dumps(workflow_summary, indent=2),
+                        file_name=f"workflow_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json"
+                    )
+            
+            render_json_viewer(response, "Complete Workflow Response")
 
 def render_workflow_navigation():
     """Render navigation between workflow steps"""

@@ -51,3 +51,5 @@ opentelemetry-exporter-otlp-proto-grpc
 azure-monitor-opentelemetry
 azure-monitor-opentelemetry-exporter
 opentelemetry-instrumentation-fastapi
+
+seo-keyword-research-tool

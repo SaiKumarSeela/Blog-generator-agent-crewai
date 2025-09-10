@@ -2,8 +2,9 @@ import yaml
 import uuid
 from datetime import datetime
 from typing import Any, Dict
-
-
+from pathlib import Path
+import json
+import os
 sessions: Dict[str, Dict] = {}
 results_storage: Dict[str, Dict] = {}
 
@@ -56,3 +57,39 @@ def convert_pydantic_to_dict(data):
         return data
 
 
+OUTPUTS_DIR = Path(__file__).resolve().parents[3] / "Outputs"
+
+def get_session_output_dir(session_id: str) -> Path:
+    """Ensure and return the output directory for a session."""
+    session_dir = OUTPUTS_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
+
+def save_json_output(session_id: str, step: str, data: Any) -> Path:
+    """Save step output as JSON under Outputs/<session_id>/<step>.json.
+
+    Returns the path to the saved file.
+    """
+    session_dir = get_session_output_dir(session_id)
+    file_path = session_dir / f"{step}.json"
+
+    # Convert Pydantic or other objects to serializable dicts
+    serializable = convert_pydantic_to_dict(data)
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(serializable, f, ensure_ascii=False, indent=2)
+
+    return file_path
+
+
+def load_json_output(session_id: str, step: str) -> Dict:
+    """Load step output JSON from Outputs/<session_id>/<step>.json."""
+    session_dir = get_session_output_dir(session_id)
+    file_path = session_dir / f"{step}.json"
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"No output found for step '{step}' in session '{session_id}'"
+        )
+    with open(file_path, "r", encoding="utf-8") as f:
+        return json.load(f)
